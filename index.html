@@ -372,6 +372,7 @@ async function loadQuizzes() {
       btns += '<button class="ghost sm" data-act="draft" data-id="' + q.id + '">Back to draft</button>';
     }
     if (q.status === 'live') btns += '<button class="sm" data-act="ended" data-id="' + q.id + '">End quiz</button>';
+    btns += '<button class="ghost sm" data-act="share" data-code="' + esc(q.code) + '">Share link</button>';
     btns += '<button class="danger sm" data-act="delete" data-id="' + q.id + '">Delete</button>';
     return '<div class="item"><h3>' + esc(q.title) + '<span class="badge ' + esc(q.status) + '">' +
       esc(STATUS[q.status] || q.status) + '</span></h3>' +
@@ -392,6 +393,17 @@ $('list').onclick = async (e) => {
   }
   const act = t.dataset.act, id = t.dataset.id;
   if (!act) return;
+  if (act === 'share') {
+    const code = t.dataset.code;
+    const link = new URL('join.html?code=' + encodeURIComponent(code), location.href).href;
+    const text = 'Join my quiz in the QuizSecure app.\nQuiz code: ' + code + '\nOpen: ' + link;
+    try {
+      if (navigator.share) { await navigator.share({ text }); return; }
+    } catch (_) { return; }
+    try { await navigator.clipboard.writeText(text); say(msg, 'Invite copied. Paste it in WhatsApp.', 'ok'); }
+    catch (_) { say(msg, text); }
+    return;
+  }
   let error;
   if (act === 'delete') {
     if (!confirm('Delete this quiz?')) return;
