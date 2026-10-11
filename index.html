@@ -66,6 +66,7 @@
   .badge.ended { background: #555; }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
   .count { color: var(--gold); font-weight: 700; }
+  .ex { margin-top: 12px; }
   .stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin-top: 14px; }
   .stat { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; }
   .stat b { display: block; font-size: 22px; color: var(--gold); }
@@ -144,7 +145,7 @@
         <textarea id="bulk" rows="9" placeholder="What is 2 + 2?&#10;A) 3&#10;B) 4&#10;C) 5&#10;D) 6&#10;Answer: B&#10;&#10;Capital of Pakistan?&#10;A) Lahore&#10;B) Karachi&#10;C) Islamabad&#10;D) Quetta&#10;Answer: C"></textarea>
         <button id="bulkBtn" class="ghost full" type="button">Add pasted questions</button>
         <div id="bulkMsg" class="msg"></div>
-        <p class="hint">Leave one blank line between questions. Each needs 4 options (A to D) and an Answer line.</p>
+        <p class="hint">Leave one blank line between questions. Each needs 4 options (A to D) and an Answer line. Optional: add a line starting with Explanation: to show feedback to students.</p>
       </details>
       <div id="qs"></div>
       <button id="addQ" class="ghost full" type="button">+ Add question</button>
@@ -170,6 +171,8 @@
           <b>Results for students</b>
           <div class="meta" id="relState" style="margin-top:6px"></div>
           <button id="relBtn" class="full" type="button"></button>
+          <div class="meta" id="revState" style="margin-top:16px"></div>
+          <button id="revBtn" class="full" type="button"></button>
         </div>
         <div id="resStats" class="stats"></div>
         <h2>Score distribution</h2>
@@ -306,9 +309,11 @@ function addQ(q) {
   }
   d.innerHTML =
     '<div class="qhead"><b class="qno"></b><button type="button" class="danger sm x">Remove</button></div>' +
-    '<textarea class="qt" rows="2" placeholder="Type the question"></textarea>' + opts;
+    '<textarea class="qt" rows="2" placeholder="Type the question"></textarea>' + opts +
+    '<textarea class="ex" rows="2" placeholder="Feedback for students (optional): why the correct answer is right"></textarea>';
   if (q) {
     d.querySelector('.qt').value = q.text || '';
+    d.querySelector('.ex').value = q.explanation || '';
     const ots = d.querySelectorAll('.ot');
     (Array.isArray(q.options) ? q.options : []).forEach((o, i) => { if (ots[i]) ots[i].value = o; });
     const r = d.querySelector('input[type=radio][value="' + q.correct_index + '"]');
@@ -334,16 +339,19 @@ function parseBulk(text) {
   blocks.forEach((b, bi) => {
     const lines = b.split('\n').map((l) => l.trim()).filter(Boolean);
     const opts = [], qlines = [];
-    let ans = -1;
+    let ans = -1, ex = '', inEx = false;
     lines.forEach((l) => {
       const am = l.match(/^(?:answer|ans|correct)\s*[:\-]?\s*\(?([A-Da-d])\)?\s*$/i);
+      const em = l.match(/^(?:explanation|feedback|why)\s*[:\-]\s*(.+)$/i);
       const om = l.match(/^\(?([A-Da-d])[\).:\-]\s*(.+)$/);
-      if (am) ans = LETTERS.indexOf(am[1].toUpperCase());
+      if (am) { ans = LETTERS.indexOf(am[1].toUpperCase()); inEx = false; }
+      else if (em) { ex = em[1].trim(); inEx = true; }
+      else if (inEx) ex += ' ' + l;
       else if (om && qlines.length) opts[LETTERS.indexOf(om[1].toUpperCase())] = om[2].trim();
       else qlines.push(l);
     });
     if (!qlines.length || opts.filter(Boolean).length !== 4 || ans < 0) errs.push(bi + 1);
-    else out.push({ text: qlines.join(' '), options: opts, correct_index: ans });
+    else out.push({ text: qlines.join(' '), options: opts, correct_index: ans, explanation: ex || null });
   });
   return { out, errs };
 }
@@ -427,7 +435,8 @@ $('saveBtn').onclick = async () => {
     const ch = c.querySelector('input[type=radio]:checked');
     if (!text || opts.some((o) => !o)) return fail('Question ' + (i + 1) + ': fill in the question and all four options.');
     if (!ch) return fail('Question ' + (i + 1) + ': choose the correct answer.');
-    qs.push({ text, options: opts, correct_index: parseInt(ch.value, 10), position: i + 1 });
+    qs.push({ text, options: opts, correct_index: parseInt(ch.value, 10),
+      explanation: c.querySelector('.ex').value.trim() || null, position: i + 1 });
   }
 
   $('saveBtn').disabled = true;
@@ -561,7 +570,8 @@ $('list').onclick = async (e) => {
     const { data: nq, error: d3 } = await sb.from('quizzes').insert(row).select('id').single();
     if (d3) return say(msg, d3.message, 'err');
     const { error: d4 } = await sb.from('questions').insert((qs0 || []).map((x) => ({
-      quiz_id: nq.id, text: x.text, options: x.options, correct_index: x.correct_index, position: x.position })));
+      quiz_id: nq.id, text: x.text, options: x.options, correct_index: x.correct_index,
+      explanation: x.explanation, position: x.position })));
     if (d4) { await sb.from('quizzes').delete().eq('id', nq.id); return say(msg, d4.message, 'err'); }
     say(msg, 'Copied as a new draft with a new code.', 'ok');
     return loadQuizzes();
@@ -609,7 +619,7 @@ const chosen = (a, q) => {
 
 async function loadResultQuizzes() {
   const { data, error } = await sb.from('quizzes')
-    .select('id,title,code,class_id,results_released').order('created_at', { ascending: false });
+    .select('id,title,code,class_id,results_released,review_released').order('created_at', { ascending: false });
   if (error) return say($('resMsg'), error.message, 'err');
   quizCache = data || [];
   const keep = $('resQuiz').value;
@@ -652,6 +662,12 @@ function updateRel() {
     : 'Hidden: students see "results not released yet".';
   $('relBtn').textContent = on ? 'Hide results from students' : 'Release results to students';
   $('relBtn').className = on ? 'ghost full' : 'full';
+  const rv = !!(resQuiz && resQuiz.review_released);
+  $('revState').textContent = rv
+    ? 'Answers and your feedback are visible: each student sees which MCQs they got wrong, the correct answer and your feedback (only after results are released).'
+    : 'Hidden: students see only their score.';
+  $('revBtn').textContent = rv ? 'Hide answers and feedback' : 'Show wrong answers and feedback to students';
+  $('revBtn').className = rv ? 'ghost full' : 'full';
 }
 
 $('relBtn').onclick = async () => {
@@ -663,6 +679,17 @@ $('relBtn').onclick = async () => {
   resQuiz.results_released = next;
   updateRel();
   say($('resMsg'), next ? 'Results released.' : 'Results hidden.', 'ok');
+};
+
+$('revBtn').onclick = async () => {
+  if (!resQuiz) return;
+  const next = !resQuiz.review_released;
+  if (next && !confirm('Show each student which MCQs they got wrong, the correct answers and your feedback? This is shown only after results are released.')) return;
+  const { error } = await sb.from('quizzes').update({ review_released: next }).eq('id', resQuiz.id);
+  if (error) return say($('resMsg'), error.message, 'err');
+  resQuiz.review_released = next;
+  updateRel();
+  say($('resMsg'), next ? 'Answers and feedback are now visible to students (after results are released).' : 'Answers and feedback hidden.', 'ok');
 };
 
 function detailHtml(a) {
