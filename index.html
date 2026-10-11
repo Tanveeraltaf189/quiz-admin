@@ -49,7 +49,7 @@
   .opt { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
   .opt input[type=radio] { width: 24px; height: 24px; flex: none; accent-color: var(--gold); }
   .opt input[type=text] { background: var(--bg); }
-  .hint { font-size: 13px; color: var(--sub); margin-top: 8px; }
+  .hint { font-size: 13px; color: var(--sub); margin-top: 8px; line-height: 1.5; }
   .msg { margin-top: 12px; min-height: 20px; font-size: 15px; }
   .msg.err { color: var(--bad); }
   .msg.ok { color: var(--ok); }
@@ -74,14 +74,20 @@
   .bl { width: 64px; color: var(--sub); flex: none; }
   .bt { flex: 1; height: 14px; background: var(--line); border-radius: 7px; overflow: hidden; }
   .bf { height: 100%; background: var(--gold); border-radius: 7px; }
-  .bv { width: 28px; text-align: right; flex: none; }
+  .bv { width: 44px; text-align: right; flex: none; }
   .tbl { overflow-x: auto; margin-top: 8px; border: 1px solid var(--line); border-radius: 14px; }
   table { border-collapse: collapse; width: 100%; font-size: 14px; white-space: nowrap; }
   th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--line); }
   th { color: var(--sub); font-weight: 600; background: var(--card); }
   tr.r { cursor: pointer; }
-  tr.d td { background: var(--card); color: var(--sub); white-space: normal; }
+  tr.d td { background: var(--card); color: var(--text); white-space: normal; }
   .flag { color: var(--bad); font-weight: 700; }
+  .ans { padding: 8px 10px; margin-top: 6px; border-left: 3px solid var(--line); border-radius: 6px;
+    background: rgba(255,255,255,.04); font-size: 14px; line-height: 1.45; }
+  .ans.good { border-left-color: var(--ok); }
+  .ans.bad { border-left-color: var(--bad); }
+  .editbar { background: #3a2f12; border: 1px solid var(--gold); color: var(--gold); border-radius: 12px;
+    padding: 12px 14px; margin-top: 14px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 </style>
 </head>
 <body>
@@ -92,7 +98,7 @@
   <p class="sub">Only admins can sign in.</p>
   <label class="f">Email<input id="email" type="email" autocomplete="username"></label>
   <label class="f">Password<input id="pass" type="password" autocomplete="current-password"></label>
-  <button id="loginBtn" class="full">Sign in</button>
+  <button id="loginBtn" class="full" type="button">Sign in</button>
   <div id="loginErr" class="msg err"></div>
 </section>
 
@@ -110,8 +116,12 @@
   </nav>
 
   <main class="wrap">
-    <!-- NEW QUIZ -->
+    <!-- NEW / EDIT QUIZ -->
     <div id="tabNew">
+      <div id="editBar" class="editbar hide">
+        <span>Editing: <b id="editName"></b></span>
+        <button id="cancelEdit" class="ghost sm" type="button">Cancel edit</button>
+      </div>
       <label class="f">Quiz title<input id="title" type="text" placeholder="e.g. Chapter 3 Test"></label>
       <label class="f">Class (optional)<select id="cls"><option value="">No class</option></select></label>
       <div class="row">
@@ -119,19 +129,24 @@
         <label class="f">Violation limit<input id="lim" type="number" min="1" value="3" inputmode="numeric"></label>
       </div>
       <label class="f">Quiz code (students enter this)<input id="code" type="text" autocapitalize="characters"></label>
+      <label class="f" style="display:flex;align-items:center;gap:12px">
+        <input id="pinScreen" type="checkbox" checked style="width:24px;height:24px;flex:none;accent-color:var(--gold)">
+        <span>Require screen pinning during the test (Android)</span>
+      </label>
 
       <h2>Questions <span id="qcount" class="count"></span></h2>
       <div id="qs"></div>
       <button id="addQ" class="ghost full" type="button">+ Add question</button>
       <button id="saveBtn" class="full" type="button">Save quiz</button>
       <div id="saveMsg" class="msg"></div>
-      <p class="hint">Each question has 4 options. Tap the round button next to the correct answer.</p>
+      <p class="hint">Each question has 4 options. Tap the circle next to the correct answer.</p>
     </div>
 
     <!-- QUIZ LIST -->
     <div id="tabList" class="hide">
       <div id="list"></div>
       <div id="listMsg" class="msg"></div>
+      <p class="hint">A quiz can be edited while it is a draft and has no results. Published quizzes: tap "Back to draft" first.</p>
     </div>
 
     <!-- RESULTS -->
@@ -140,15 +155,22 @@
       <button id="resRefresh" class="ghost full" type="button">Refresh results</button>
       <div id="resMsg" class="msg"></div>
       <div id="resTools" class="hide">
+        <div class="item">
+          <b>Results for students</b>
+          <div class="meta" id="relState" style="margin-top:6px"></div>
+          <button id="relBtn" class="full" type="button"></button>
+        </div>
         <div id="resStats" class="stats"></div>
         <h2>Score distribution</h2>
         <div id="chartScore"></div>
         <h2>Violations per student</h2>
         <div id="chartViol"></div>
+        <h2>Correct answers per question</h2>
+        <div id="chartQ"></div>
         <h2>Save results</h2>
         <label class="f">How to save
           <select id="saveMode">
-            <option value="share">Share sheet (choose Google Drive)</option>
+            <option value="share">Share (WhatsApp, email, etc.)</option>
             <option value="download">Download to this phone</option>
           </select>
         </label>
@@ -156,9 +178,12 @@
           <button id="xlsBtn" class="full" type="button">Excel</button>
           <button id="pdfBtn" class="full" type="button">PDF</button>
         </div>
+
         <button id="clearBtn" class="danger full" type="button">Clear results from database</button>
         <p class="hint">Export first, then clear. Clear only after the quiz has ended, because students can no longer be blocked from a second attempt once their result is removed.</p>
+
         <h2>All submissions</h2>
+        <p class="hint" style="margin-top:0">Tap a row to see that student's answers and violations.</p>
         <div class="tbl"><table id="resTable"></table></div>
       </div>
     </div>
@@ -190,8 +215,10 @@ const show = (id) => {
   $('app').classList.toggle('hide', id !== 'app');
 };
 const say = (el, text, kind) => { el.textContent = text; el.className = 'msg ' + (kind || ''); };
+const LETTERS = 'ABCD';
 
-let classes = [];
+let classes = [], classesOk = false;
+let editId = null, editOldQ = [];
 
 /* ---------- Login ---------- */
 async function boot() {
@@ -209,8 +236,9 @@ async function enter(user) {
     return;
   }
   $('who').textContent = user.email;
+  try { history.replaceState(null, '', location.pathname); } catch (_) {}
   show('app');
-  $('code').value = makeCode();
+  if (!$('code').value) $('code').value = makeCode();
   if (!document.querySelector('.qcard')) addQ();
   await loadClasses();
   await loadQuizzes();
@@ -238,7 +266,7 @@ document.querySelectorAll('.tabs button').forEach((b) => {
     if (b.dataset.tab === 'tabRes') loadResultQuizzes();
   };
 });
-const goTab = (t) => document.querySelector(`.tabs button[data-tab="${t}"]`).click();
+const goTab = (t) => document.querySelector('.tabs button[data-tab="' + t + '"]').click();
 
 /* ---------- Question builder ---------- */
 let qSeq = 0;
@@ -255,7 +283,7 @@ function renumber() {
   $('qcount').textContent = '(' + cards.length + ')';
 }
 
-function addQ() {
+function addQ(q) {
   qSeq++;
   const id = 'q' + qSeq;
   const d = document.createElement('div');
@@ -263,11 +291,18 @@ function addQ() {
   let opts = '';
   for (let i = 0; i < 4; i++) {
     opts += '<div class="opt"><input type="radio" name="' + id + '" value="' + i + '" aria-label="Correct answer">' +
-      '<input class="ot" type="text" placeholder="Option ' + 'ABCD'[i] + '"></div>';
+      '<input class="ot" type="text" placeholder="Option ' + LETTERS[i] + '"></div>';
   }
   d.innerHTML =
     '<div class="qhead"><b class="qno"></b><button type="button" class="danger sm x">Remove</button></div>' +
     '<textarea class="qt" rows="2" placeholder="Type the question"></textarea>' + opts;
+  if (q) {
+    d.querySelector('.qt').value = q.text || '';
+    const ots = d.querySelectorAll('.ot');
+    (Array.isArray(q.options) ? q.options : []).forEach((o, i) => { if (ots[i]) ots[i].value = o; });
+    const r = d.querySelector('input[type=radio][value="' + q.correct_index + '"]');
+    if (r) r.checked = true;
+  }
   d.querySelector('.x').onclick = () => {
     if (document.querySelectorAll('.qcard').length > 1) { d.remove(); renumber(); }
   };
@@ -276,11 +311,61 @@ function addQ() {
   return d;
 }
 
-$('addQ').onclick = () => { const d = addQ(); d.querySelector('.qt').focus(); d.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
+$('addQ').onclick = () => {
+  const d = addQ();
+  d.querySelector('.qt').focus();
+  d.scrollIntoView({ behavior: 'smooth', block: 'center' });
+};
+
+function setEditMode(on, title) {
+  $('editBar').classList.toggle('hide', !on);
+  $('editName').textContent = title || '';
+  $('saveBtn').textContent = on ? 'Update quiz' : 'Save quiz';
+}
+
+function resetForm() {
+  editId = null; editOldQ = [];
+  setEditMode(false);
+  $('title').value = '';
+  $('cls').value = '';
+  $('dur').value = 30;
+  $('lim').value = 3;
+  $('pinScreen').checked = true;
+  $('qs').innerHTML = '';
+  addQ();
+  $('code').value = makeCode();
+}
+
+$('cancelEdit').onclick = () => { resetForm(); say($('saveMsg'), ''); };
+
+async function startEdit(id) {
+  const msg = $('listMsg');
+  const { count, error: ce } = await sb.from('attempts').select('id', { count: 'exact', head: true }).eq('quiz_id', id);
+  if (ce) return say(msg, ce.message, 'err');
+  if (count > 0) return say(msg, 'This quiz already has results. Export and clear them first, or create a new quiz.', 'err');
+  const { data: q, error } = await sb.from('quizzes').select('*').eq('id', id).single();
+  if (error) return say(msg, error.message, 'err');
+  const { data: qs, error: e2 } = await sb.from('questions').select('*').eq('quiz_id', id).order('position');
+  if (e2) return say(msg, e2.message, 'err');
+  editId = id;
+  editOldQ = (qs || []).map((x) => x.id);
+  $('title').value = q.title;
+  $('cls').value = q.class_id || '';
+  $('dur').value = q.duration_min;
+  $('lim').value = q.violation_limit;
+  $('code').value = q.code;
+  $('pinScreen').checked = q.pin_screen !== false;
+  $('qs').innerHTML = '';
+  (qs && qs.length ? qs : [null]).forEach((x) => addQ(x));
+  say($('saveMsg'), '');
+  setEditMode(true, q.title);
+  goTab('tabNew');
+  window.scrollTo(0, 0);
+}
 
 $('saveBtn').onclick = async () => {
   const msg = $('saveMsg');
-  const fail = (t) => say(msg, t, 'err');
+  const fail = (t) => { $('saveBtn').disabled = false; say(msg, t, 'err'); };
   say(msg, '');
   const title = $('title').value.trim();
   const dur = parseInt($('dur').value, 10);
@@ -301,40 +386,56 @@ $('saveBtn').onclick = async () => {
   }
 
   $('saveBtn').disabled = true;
-  const row = { title, duration_min: dur, violation_limit: lim, code };
+  const dupMsg = 'This code is already in use. Enter a different code.';
+
+  if (editId) {
+    const upd = { title, duration_min: dur, violation_limit: lim, code, pin_screen: $('pinScreen').checked };
+    if (classesOk) upd.class_id = $('cls').value || null;
+    const { error } = await sb.from('quizzes').update(upd).eq('id', editId);
+    if (error) return fail(error.code === '23505' ? dupMsg : error.message);
+    const { error: e2 } = await sb.from('questions').insert(qs.map((x) => Object.assign({ quiz_id: editId }, x)));
+    if (e2) return fail(e2.message);
+    if (editOldQ.length) {
+      const { error: e3 } = await sb.from('questions').delete().in('id', editOldQ);
+      if (e3) return fail('Saved, but the old questions could not be removed: ' + e3.message);
+    }
+    resetForm();
+    $('saveBtn').disabled = false;
+    await loadQuizzes();
+    goTab('tabList');
+    return say($('listMsg'), 'Quiz updated.', 'ok');
+  }
+
+  const row = { title, duration_min: dur, violation_limit: lim, code, pin_screen: $('pinScreen').checked };
   if ($('cls').value) row.class_id = $('cls').value;
   const { data: q, error } = await sb.from('quizzes').insert(row).select('id').single();
-  if (error) {
-    $('saveBtn').disabled = false;
-    return fail(error.code === '23505' ? 'This code is already in use. Enter a different code.' : error.message);
-  }
+  if (error) return fail(error.code === '23505' ? dupMsg : error.message);
   const { error: e2 } = await sb.from('questions').insert(qs.map((x) => Object.assign({ quiz_id: q.id }, x)));
   if (e2) {
     await sb.from('quizzes').delete().eq('id', q.id);
-    $('saveBtn').disabled = false;
     return fail(e2.message);
   }
+  resetForm();
   $('saveBtn').disabled = false;
-  $('title').value = '';
-  $('qs').innerHTML = '';
-  addQ();
-  $('code').value = makeCode();
-  say(msg, qs.length + ' questions saved. The quiz is a draft.', 'ok');
   await loadQuizzes();
   goTab('tabList');
+  say($('listMsg'), 'Saved as a draft with ' + qs.length + ' questions. Press Publish when ready.', 'ok');
 };
 
 /* ---------- Classes ---------- */
 async function loadClasses() {
   const { data, error } = await sb.from('classes').select('*').order('created_at');
+  classesOk = !error;
   classes = error ? [] : (data || []);
+  const keep = $('cls').value;
   $('cls').innerHTML = '<option value="">No class</option>' +
     classes.map((c) => '<option value="' + esc(c.id) + '">' + esc(c.name) + '</option>').join('');
+  if (keep) $('cls').value = keep;
   $('clsList').innerHTML = classes.map((c) =>
     '<div class="item"><div style="display:flex;justify-content:space-between;align-items:center">' +
     '<b>' + esc(c.name) + '</b><button class="danger sm" data-delcls="' + esc(c.id) + '">Delete</button></div></div>'
   ).join('');
-  if (error) say($('clsMsg'), 'Classes table not found. Run the classes SQL.', 'err');
+  if (error) say($('clsMsg'), 'Classes table not found. Run the classes SQL first.', 'err');
 }
 
 $('clsAdd').onclick = async () => {
@@ -361,26 +462,35 @@ const STATUS = { draft: 'Draft', published: 'Published', live: 'Live', ended: 'E
 async function loadQuizzes() {
   const { data, error } = await sb.from('quizzes').select('*, questions(count)').order('created_at', { ascending: false });
   if (error) return say($('listMsg'), error.message, 'err');
-  say($('listMsg'), data.length ? '' : 'No quizzes yet. Create one in "New quiz".');
   $('list').innerHTML = data.map((q) => {
     const n = q.questions && q.questions[0] ? q.questions[0].count : 0;
     const cname = (classes.find((c) => c.id === q.class_id) || {}).name;
     let btns = '';
-    if (q.status === 'draft') btns += '<button class="sm" data-act="published" data-id="' + q.id + '">Publish</button>';
+    if (q.status === 'draft') {
+      btns += '<button class="sm" data-act="published" data-id="' + q.id + '">Publish</button>';
+      btns += '<button class="ghost sm" data-act="edit" data-id="' + q.id + '">Edit</button>';
+    }
     if (q.status === 'published') {
       btns += '<button class="sm" data-act="start" data-id="' + q.id + '">Start</button>';
       btns += '<button class="ghost sm" data-act="draft" data-id="' + q.id + '">Back to draft</button>';
     }
     if (q.status === 'live') btns += '<button class="sm" data-act="ended" data-id="' + q.id + '">End quiz</button>';
+    if (q.status !== 'ended') {
+      const off = q.pin_screen === false;
+      btns += '<button class="ghost sm" data-act="pin" data-id="' + q.id + '" data-val="' + (off ? 'on' : 'off') + '">' +
+        (off ? 'Turn pinning ON' : 'Turn pinning OFF') + '</button>';
+    }
     btns += '<button class="ghost sm" data-act="share" data-code="' + esc(q.code) + '">Share link</button>';
     btns += '<button class="danger sm" data-act="delete" data-id="' + q.id + '">Delete</button>';
     return '<div class="item"><h3>' + esc(q.title) + '<span class="badge ' + esc(q.status) + '">' +
       esc(STATUS[q.status] || q.status) + '</span></h3>' +
-      '<div class="meta">' + n + ' questions &middot; ' + q.duration_min + ' min &middot; limit ' + q.violation_limit +
-      (cname ? ' &middot; ' + esc(cname) : '') + '</div>' +
+      '<div class="meta">' + n + ' questions &middot; ' + q.duration_min + ' minutes &middot; limit ' + q.violation_limit +
+      (cname ? ' &middot; ' + esc(cname) : '') +
+      ' &middot; pinning ' + (q.pin_screen === false ? 'OFF' : 'ON') + '</div>' +
       '<span class="code" data-copy="' + esc(q.code) + '">' + esc(q.code) + '</span>' +
       '<div class="actions">' + btns + '</div></div>';
   }).join('');
+  if (!$('listMsg').textContent) say($('listMsg'), data.length ? '' : 'No quizzes yet. Create one in "New quiz".');
 }
 
 $('list').onclick = async (e) => {
@@ -393,6 +503,13 @@ $('list').onclick = async (e) => {
   }
   const act = t.dataset.act, id = t.dataset.id;
   if (!act) return;
+  say(msg, '');
+  if (act === 'edit') return startEdit(id);
+  if (act === 'pin') {
+    const { error: pe } = await sb.from('quizzes').update({ pin_screen: t.dataset.val === 'on' }).eq('id', id);
+    if (pe) return say(msg, pe.message, 'err');
+    return loadQuizzes();
+  }
   if (act === 'share') {
     const code = t.dataset.code;
     const link = new URL('join.html?code=' + encodeURIComponent(code), location.href).href;
@@ -418,13 +535,19 @@ $('list').onclick = async (e) => {
 };
 
 /* ---------- Results ---------- */
-let resRows = [], resQuiz = null, quizCache = [];
+let resRows = [], resQs = [], resQuiz = null, quizCache = [];
 const pct = (a) => (a.total ? Math.round((a.score * 100) / a.total) : 0);
 const nViol = (a) => (Array.isArray(a.violations) ? a.violations.length : 0);
+const chosen = (a, q) => {
+  const v = a.answers ? a.answers[q.id] : undefined;
+  if (v === undefined || v === null || v === '') return -1;
+  const i = parseInt(v, 10);
+  return i >= 0 && i < 4 ? i : -1;
+};
 
 async function loadResultQuizzes() {
   const { data, error } = await sb.from('quizzes')
-    .select('id,title,code,class_id').order('created_at', { ascending: false });
+    .select('id,title,code,class_id,results_released').order('created_at', { ascending: false });
   if (error) return say($('resMsg'), error.message, 'err');
   quizCache = data || [];
   const keep = $('resQuiz').value;
@@ -435,37 +558,81 @@ async function loadResultQuizzes() {
   if (keep) $('resQuiz').value = keep;
 }
 
-function bars(labels, vals) {
-  const max = Math.max(1, ...vals);
+function bars(labels, vals, max, suffix) {
+  const m = max || Math.max(1, ...vals);
   return labels.map((l, i) =>
     '<div class="brow"><span class="bl">' + esc(l) + '</span><div class="bt"><div class="bf" style="width:' +
-    (vals[i] * 100 / max) + '%"></div></div><span class="bv">' + vals[i] + '</span></div>').join('');
+    (vals[i] * 100 / m) + '%"></div></div><span class="bv">' + vals[i] + (suffix || '') + '</span></div>').join('');
 }
 
 async function loadResults() {
   const id = $('resQuiz').value;
   say($('resMsg'), '');
-  resRows = []; resQuiz = null;
+  resRows = []; resQs = []; resQuiz = null;
   if (!id) return $('resTools').classList.add('hide');
   resQuiz = quizCache.find((q) => q.id === id) || null;
-  const { data, error } = await sb.from('attempts').select('*').eq('quiz_id', id)
-    .order('submitted_at', { ascending: false });
-  if (error) return say($('resMsg'), error.message, 'err');
-  resRows = data || [];
+  const [a, q] = await Promise.all([
+    sb.from('attempts').select('*').eq('quiz_id', id).order('submitted_at', { ascending: false }),
+    sb.from('questions').select('*').eq('quiz_id', id).order('position'),
+  ]);
+  if (a.error) return say($('resMsg'), a.error.message, 'err');
+  resRows = a.data || [];
+  resQs = q.error ? [] : (q.data || []);
   $('resTools').classList.remove('hide');
+  updateRel();
   renderResults();
+}
+
+function updateRel() {
+  const on = !!(resQuiz && resQuiz.results_released);
+  $('relState').textContent = on
+    ? 'Released: each student can see only their own score in the app.'
+    : 'Hidden: students see "results not released yet".';
+  $('relBtn').textContent = on ? 'Hide results from students' : 'Release results to students';
+  $('relBtn').className = on ? 'ghost full' : 'full';
+}
+
+$('relBtn').onclick = async () => {
+  if (!resQuiz) return;
+  const next = !resQuiz.results_released;
+  if (next && !confirm('Release results? Each student will see only their own score in the app.')) return;
+  const { error } = await sb.from('quizzes').update({ results_released: next }).eq('id', resQuiz.id);
+  if (error) return say($('resMsg'), error.message, 'err');
+  resQuiz.results_released = next;
+  updateRel();
+  say($('resMsg'), next ? 'Results released.' : 'Results hidden.', 'ok');
+};
+
+function detailHtml(a) {
+  let h = '';
+  const v = Array.isArray(a.violations) ? a.violations : [];
+  if (v.length) {
+    h += '<div><b>Violations:</b> ' + v.map((x) =>
+      esc(x.type) + ' at ' + esc(new Date(x.at).toLocaleTimeString())).join(' &middot; ') + '</div>';
+  }
+  h += '<div style="margin-top:8px"><b>Answers:</b></div>';
+  resQs.forEach((q, i) => {
+    const idx = chosen(a, q);
+    const ok = idx === q.correct_index;
+    const opts = Array.isArray(q.options) ? q.options : [];
+    h += '<div class="ans ' + (ok ? 'good' : 'bad') + '">Q' + (i + 1) + '. ' + esc(q.text) + '<br>' +
+      (idx >= 0 ? 'Chose: ' + LETTERS[idx] + ') ' + esc(opts[idx]) : 'Not answered') +
+      (ok ? ' &#10003;' : ' &#10007; &nbsp; Correct: ' + LETTERS[q.correct_index] + ') ' + esc(opts[q.correct_index])) +
+      '</div>';
+  });
+  return h;
 }
 
 function renderResults() {
   const n = resRows.length;
   if (!n) {
     $('resStats').innerHTML = '';
-    $('chartScore').innerHTML = $('chartViol').innerHTML = '';
+    $('chartScore').innerHTML = $('chartViol').innerHTML = $('chartQ').innerHTML = '';
     $('resTable').innerHTML = '';
     return say($('resMsg'), 'No submissions yet for this quiz.');
   }
   const ps = resRows.map(pct);
-  const avg = Math.round(ps.reduce((a, b) => a + b, 0) / n);
+  const avg = Math.round(ps.reduce((x, y) => x + y, 0) / n);
   const flagged = resRows.filter((a) => nViol(a) > 0).length;
   const stat = (v, l) => '<div class="stat"><b>' + v + '</b><span>' + l + '</span></div>';
   $('resStats').innerHTML = stat(n, 'Submissions') + stat(avg + '%', 'Average score') +
@@ -480,6 +647,11 @@ function renderResults() {
   resRows.forEach((a) => { v[Math.min(3, nViol(a))]++; });
   $('chartViol').innerHTML = bars(['0', '1', '2', '3+'], v);
 
+  $('chartQ').innerHTML = resQs.length
+    ? bars(resQs.map((_, i) => 'Q' + (i + 1)),
+        resQs.map((q) => Math.round(resRows.filter((a) => chosen(a, q) === q.correct_index).length * 100 / n)), 100, '%')
+    : '';
+
   let h = '<thead><tr><th>#</th><th>Name</th><th>Roll</th><th>Score</th><th>%</th><th>Viol.</th><th>Auto</th><th>Submitted</th></tr></thead><tbody>';
   resRows.forEach((a, i) => {
     const vc = nViol(a);
@@ -487,10 +659,7 @@ function renderResults() {
       '</td><td>' + a.score + ' / ' + a.total + '</td><td>' + pct(a) + '%</td><td' + (vc ? ' class="flag"' : '') + '>' + vc +
       '</td><td>' + (a.auto_submitted ? 'Yes' : 'No') + '</td><td>' +
       esc(a.submitted_at ? new Date(a.submitted_at).toLocaleString() : '') + '</td></tr>';
-    if (vc) {
-      h += '<tr class="d hide" id="d' + i + '"><td colspan="8">' + a.violations.map((x) =>
-        esc(x.type) + ' at ' + esc(new Date(x.at).toLocaleTimeString())).join(' &middot; ') + '</td></tr>';
-    }
+    h += '<tr class="d hide" id="d' + i + '"><td colspan="8">' + detailHtml(a) + '</td></tr>';
   });
   $('resTable').innerHTML = h + '</tbody>';
 }
@@ -509,6 +678,19 @@ const fname = (ext) => {
   return base + '_' + new Date().toISOString().slice(0, 10) + '.' + ext;
 };
 
+function fmtDate(a) { return a.submitted_at ? new Date(a.submitted_at).toLocaleString() : ''; }
+
+// header + correct-answer row + one row per student (with each chosen option)
+function matrix() {
+  const head = ['#', 'Name', 'Roll No', 'Score', 'Total', 'Percent', 'Violations', 'Auto submitted', 'Submitted']
+    .concat(resQs.map((_, i) => 'Q' + (i + 1)));
+  const correct = ['', 'CORRECT ANSWER', '', '', '', '', '', '', '']
+    .concat(resQs.map((q) => LETTERS[q.correct_index]));
+  const rows = resRows.map((a, i) => [i + 1, a.student_name, a.roll_no, a.score, a.total, pct(a), nViol(a),
+    a.auto_submitted ? 'Yes' : 'No', fmtDate(a)].concat(resQs.map((q) => { const c = chosen(a, q); return c >= 0 ? LETTERS[c] : '-'; })));
+  return [head, correct].concat(rows);
+}
+
 async function saveFile(blob, name) {
   const msg = $('resMsg');
   if ($('saveMode').value === 'share') {
@@ -516,7 +698,7 @@ async function saveFile(blob, name) {
       const file = new File([blob], name, { type: blob.type });
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
         await navigator.share({ files: [file], title: name });
-        return say(msg, 'Shared. If you picked Google Drive, the file is now in your Drive.', 'ok');
+        return say(msg, 'Shared.', 'ok');
       }
     } catch (e) {
       if (e && e.name === 'AbortError') return;
@@ -527,7 +709,7 @@ async function saveFile(blob, name) {
   a.href = url; a.download = name;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 5000);
-  say(msg, 'Downloaded ' + name + '. Upload it to Google Drive from your Downloads.', 'ok');
+  say(msg, 'Downloaded ' + name + '. Find it in your Downloads folder.', 'ok');
 }
 
 $('xlsBtn').onclick = async () => {
@@ -535,13 +717,14 @@ $('xlsBtn').onclick = async () => {
   const rows = resRows.map((a, i) => ({
     '#': i + 1, Name: a.student_name, 'Roll No': a.roll_no, Score: a.score, Total: a.total,
     Percent: pct(a), Violations: nViol(a), 'Auto submitted': a.auto_submitted ? 'Yes' : 'No',
-    Submitted: a.submitted_at ? new Date(a.submitted_at).toLocaleString() : '',
+    Submitted: fmtDate(a),
   }));
   const vio = [];
   resRows.forEach((a) => (a.violations || []).forEach((x) =>
     vio.push({ Name: a.student_name, 'Roll No': a.roll_no, Type: x.type, Time: new Date(x.at).toLocaleString() })));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Results');
+  if (resQs.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(matrix()), 'Answers');
   if (vio.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(vio), 'Violations');
   const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
   await saveFile(new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), fname('xlsx'));
@@ -551,7 +734,7 @@ $('pdfBtn').onclick = async () => {
   if (!resRows.length) return say($('resMsg'), 'Nothing to export yet.', 'err');
   const doc = new window.jspdf.jsPDF();
   const ps = resRows.map(pct);
-  const avg = Math.round(ps.reduce((a, b) => a + b, 0) / ps.length);
+  const avg = Math.round(ps.reduce((x, y) => x + y, 0) / ps.length);
   doc.setFontSize(16);
   doc.text((resQuiz ? resQuiz.title : 'Quiz') + ' - Results', 14, 16);
   doc.setFontSize(10);
@@ -560,7 +743,7 @@ $('pdfBtn').onclick = async () => {
     startY: 28,
     head: [['#', 'Name', 'Roll', 'Score', '%', 'Violations', 'Auto', 'Submitted']],
     body: resRows.map((a, i) => [i + 1, a.student_name, a.roll_no, a.score + '/' + a.total, pct(a) + '%',
-      nViol(a), a.auto_submitted ? 'Yes' : 'No', a.submitted_at ? new Date(a.submitted_at).toLocaleString() : '']),
+      nViol(a), a.auto_submitted ? 'Yes' : 'No', fmtDate(a)]),
     styles: { fontSize: 9 }, headStyles: { fillColor: [22, 33, 62] },
   });
   await saveFile(doc.output('blob'), fname('pdf'));
@@ -574,7 +757,6 @@ $('clearBtn').onclick = async () => {
   await loadResults();
   say($('resMsg'), 'Results cleared from the database.', 'ok');
 };
-
 
 boot();
 </script>
