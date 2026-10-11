@@ -133,8 +133,19 @@
         <input id="pinScreen" type="checkbox" checked style="width:24px;height:24px;flex:none;accent-color:var(--gold)">
         <span>Require screen pinning during the test (Android)</span>
       </label>
+      <label class="f" style="display:flex;align-items:center;gap:12px">
+        <input id="shuffleQ" type="checkbox" checked style="width:24px;height:24px;flex:none;accent-color:var(--gold)">
+        <span>Shuffle questions and options for each student</span>
+      </label>
 
       <h2>Questions <span id="qcount" class="count"></span></h2>
+      <details style="margin-top:6px">
+        <summary class="hint" style="cursor:pointer">Paste many questions at once</summary>
+        <textarea id="bulk" rows="9" placeholder="What is 2 + 2?&#10;A) 3&#10;B) 4&#10;C) 5&#10;D) 6&#10;Answer: B&#10;&#10;Capital of Pakistan?&#10;A) Lahore&#10;B) Karachi&#10;C) Islamabad&#10;D) Quetta&#10;Answer: C"></textarea>
+        <button id="bulkBtn" class="ghost full" type="button">Add pasted questions</button>
+        <div id="bulkMsg" class="msg"></div>
+        <p class="hint">Leave one blank line between questions. Each needs 4 options (A to D) and an Answer line.</p>
+      </details>
       <div id="qs"></div>
       <button id="addQ" class="ghost full" type="button">+ Add question</button>
       <button id="saveBtn" class="full" type="button">Save quiz</button>
@@ -317,6 +328,38 @@ $('addQ').onclick = () => {
   d.scrollIntoView({ behavior: 'smooth', block: 'center' });
 };
 
+function parseBulk(text) {
+  const blocks = text.replace(/\r/g, '').split(/\n\s*\n/).map((b) => b.trim()).filter(Boolean);
+  const out = [], errs = [];
+  blocks.forEach((b, bi) => {
+    const lines = b.split('\n').map((l) => l.trim()).filter(Boolean);
+    const opts = [], qlines = [];
+    let ans = -1;
+    lines.forEach((l) => {
+      const am = l.match(/^(?:answer|ans|correct)\s*[:\-]?\s*\(?([A-Da-d])\)?\s*$/i);
+      const om = l.match(/^\(?([A-Da-d])[\).:\-]\s*(.+)$/);
+      if (am) ans = LETTERS.indexOf(am[1].toUpperCase());
+      else if (om && qlines.length) opts[LETTERS.indexOf(om[1].toUpperCase())] = om[2].trim();
+      else qlines.push(l);
+    });
+    if (!qlines.length || opts.filter(Boolean).length !== 4 || ans < 0) errs.push(bi + 1);
+    else out.push({ text: qlines.join(' '), options: opts, correct_index: ans });
+  });
+  return { out, errs };
+}
+
+$('bulkBtn').onclick = () => {
+  const m = $('bulkMsg');
+  const { out, errs } = parseBulk($('bulk').value);
+  if (!out.length) return say(m, 'No valid questions found. Check the format below.', 'err');
+  const cards = document.querySelectorAll('.qcard');
+  if (cards.length === 1 && !cards[0].querySelector('.qt').value.trim()) cards[0].remove();
+  out.forEach((q) => addQ(q));
+  renumber();
+  $('bulk').value = '';
+  say(m, out.length + ' questions added.' + (errs.length ? ' Skipped block(s): ' + errs.join(', ') + ' (each needs a question, 4 options A to D and an Answer line).' : ''), errs.length ? 'err' : 'ok');
+};
+
 function setEditMode(on, title) {
   $('editBar').classList.toggle('hide', !on);
   $('editName').textContent = title || '';
@@ -331,6 +374,7 @@ function resetForm() {
   $('dur').value = 30;
   $('lim').value = 3;
   $('pinScreen').checked = true;
+  $('shuffleQ').checked = true;
   $('qs').innerHTML = '';
   addQ();
   $('code').value = makeCode();
@@ -355,6 +399,7 @@ async function startEdit(id) {
   $('lim').value = q.violation_limit;
   $('code').value = q.code;
   $('pinScreen').checked = q.pin_screen !== false;
+  $('shuffleQ').checked = q.shuffle_questions !== false;
   $('qs').innerHTML = '';
   (qs && qs.length ? qs : [null]).forEach((x) => addQ(x));
   say($('saveMsg'), '');
@@ -389,7 +434,7 @@ $('saveBtn').onclick = async () => {
   const dupMsg = 'This code is already in use. Enter a different code.';
 
   if (editId) {
-    const upd = { title, duration_min: dur, violation_limit: lim, code, pin_screen: $('pinScreen').checked };
+    const upd = { title, duration_min: dur, violation_limit: lim, code, pin_screen: $('pinScreen').checked, shuffle_questions: $('shuffleQ').checked };
     if (classesOk) upd.class_id = $('cls').value || null;
     const { error } = await sb.from('quizzes').update(upd).eq('id', editId);
     if (error) return fail(error.code === '23505' ? dupMsg : error.message);
@@ -406,7 +451,7 @@ $('saveBtn').onclick = async () => {
     return say($('listMsg'), 'Quiz updated.', 'ok');
   }
 
-  const row = { title, duration_min: dur, violation_limit: lim, code, pin_screen: $('pinScreen').checked };
+  const row = { title, duration_min: dur, violation_limit: lim, code, pin_screen: $('pinScreen').checked, shuffle_questions: $('shuffleQ').checked };
   if ($('cls').value) row.class_id = $('cls').value;
   const { data: q, error } = await sb.from('quizzes').insert(row).select('id').single();
   if (error) return fail(error.code === '23505' ? dupMsg : error.message);
@@ -481,6 +526,7 @@ async function loadQuizzes() {
         (off ? 'Turn pinning ON' : 'Turn pinning OFF') + '</button>';
     }
     btns += '<button class="ghost sm" data-act="share" data-code="' + esc(q.code) + '">Share link</button>';
+    btns += '<button class="ghost sm" data-act="dup" data-id="' + q.id + '">Duplicate</button>';
     btns += '<button class="danger sm" data-act="delete" data-id="' + q.id + '">Delete</button>';
     return '<div class="item"><h3>' + esc(q.title) + '<span class="badge ' + esc(q.status) + '">' +
       esc(STATUS[q.status] || q.status) + '</span></h3>' +
@@ -504,6 +550,22 @@ $('list').onclick = async (e) => {
   const act = t.dataset.act, id = t.dataset.id;
   if (!act) return;
   say(msg, '');
+  if (act === 'dup') {
+    const { data: q0, error: d1 } = await sb.from('quizzes').select('*').eq('id', id).single();
+    if (d1) return say(msg, d1.message, 'err');
+    const { data: qs0, error: d2 } = await sb.from('questions').select('*').eq('quiz_id', id).order('position');
+    if (d2) return say(msg, d2.message, 'err');
+    const row = { title: q0.title + ' (copy)', duration_min: q0.duration_min, violation_limit: q0.violation_limit,
+      code: makeCode(), pin_screen: q0.pin_screen, shuffle_questions: q0.shuffle_questions };
+    if (q0.class_id) row.class_id = q0.class_id;
+    const { data: nq, error: d3 } = await sb.from('quizzes').insert(row).select('id').single();
+    if (d3) return say(msg, d3.message, 'err');
+    const { error: d4 } = await sb.from('questions').insert((qs0 || []).map((x) => ({
+      quiz_id: nq.id, text: x.text, options: x.options, correct_index: x.correct_index, position: x.position })));
+    if (d4) { await sb.from('quizzes').delete().eq('id', nq.id); return say(msg, d4.message, 'err'); }
+    say(msg, 'Copied as a new draft with a new code.', 'ok');
+    return loadQuizzes();
+  }
   if (act === 'edit') return startEdit(id);
   if (act === 'pin') {
     const { error: pe } = await sb.from('quizzes').update({ pin_screen: t.dataset.val === 'on' }).eq('id', id);
@@ -757,6 +819,14 @@ $('clearBtn').onclick = async () => {
   await loadResults();
   say($('resMsg'), 'Results cleared from the database.', 'ok');
 };
+
+
+// While the Results tab is open, refresh every 15 seconds (unless a student's details are expanded).
+setInterval(() => {
+  if ($('app').classList.contains('hide') || $('tabRes').classList.contains('hide')) return;
+  if (!$('resQuiz').value || document.querySelector('tr.d:not(.hide)')) return;
+  loadResults();
+}, 15000);
 
 boot();
 </script>
