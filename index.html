@@ -148,7 +148,8 @@
         <p class="hint">Leave one blank line between questions. Each needs 4 options (A to D) and an Answer line. Optional: add a line starting with Explanation: to show feedback to students.</p>
       </details>
       <div id="qs"></div>
-      <button id="addQ" class="ghost full" type="button">+ Add question</button>
+      <button id="addQ" class="ghost full" type="button">+ Add MCQ</button>
+      <button id="addW" class="ghost full" type="button">+ Add written question</button>
       <button id="saveBtn" class="full" type="button">Save quiz</button>
       <div id="saveMsg" class="msg"></div>
       <p class="hint">Each question has 4 options. Tap the circle next to the correct answer.</p>
@@ -181,6 +182,17 @@
         <div id="chartViol"></div>
         <h2>Correct answers per question</h2>
         <div id="chartQ"></div>
+        <div id="aiCard" class="item hide">
+          <b>Written answers (AI marking)</b>
+          <div class="meta" style="margin-top:6px">The AI marks each written answer out of the marks you set, highlights mistakes and suggests corrections. Student names are not sent. Check the marks (tap a student's row) before you release results; you can change any mark.</div>
+          <label class="f" style="display:flex;align-items:center;gap:12px">
+            <input id="aiRe" type="checkbox" style="width:22px;height:22px;flex:none;accent-color:var(--gold)">
+            <span>Re-grade answers that are already graded</span>
+          </label>
+          <button id="aiBtn" class="full" type="button">Grade written answers with AI</button>
+          <div id="aiMsg" class="msg"></div>
+        </div>
+
         <h2>Save results</h2>
         <label class="f">How to save
           <select id="saveMode">
@@ -309,15 +321,42 @@ function addQ(q) {
   }
   d.innerHTML =
     '<div class="qhead"><b class="qno"></b><button type="button" class="danger sm x">Remove</button></div>' +
-    '<textarea class="qt" rows="2" placeholder="Type the question"></textarea>' + opts +
-    '<textarea class="ex" rows="2" placeholder="Feedback for students (optional): why the correct answer is right"></textarea>';
+    '<div class="row">' +
+      '<label class="f" style="margin-top:0">Type<select class="qtype"><option value="mcq">MCQ</option><option value="written">Written answer</option></select></label>' +
+      '<label class="f" style="margin-top:0">Marks<input class="qmarks" type="number" min="0" step="0.5" value="1" inputmode="decimal"></label>' +
+    '</div>' +
+    '<textarea class="qt" rows="2" placeholder="Type the question" style="margin-top:12px"></textarea>' +
+    '<div class="mcqBox">' + opts +
+      '<textarea class="ex" rows="2" placeholder="Feedback for students (optional): why the correct answer is right"></textarea>' +
+    '</div>' +
+    '<div class="wBox hide">' +
+      '<div class="row">' +
+        '<label class="f">Minimum words<input class="wmin" type="number" min="0" value="200" inputmode="numeric"></label>' +
+        '<label class="f">Maximum words<input class="wmax" type="number" min="0" value="300" inputmode="numeric"></label>' +
+      '</div>' +
+      '<textarea class="ma" rows="4" style="margin-top:12px" placeholder="Model answer or key points the AI should look for (optional, hidden from students). Marking is better when you fill this."></textarea>' +
+    '</div>';
+  const sync = () => {
+    const w = d.querySelector('.qtype').value === 'written';
+    d.querySelector('.mcqBox').classList.toggle('hide', w);
+    d.querySelector('.wBox').classList.toggle('hide', !w);
+  };
+  d.querySelector('.qtype').onchange = sync;
   if (q) {
+    d.querySelector('.qtype').value = q.qtype === 'written' ? 'written' : 'mcq';
     d.querySelector('.qt').value = q.text || '';
+    d.querySelector('.qmarks').value = q.marks != null ? Number(q.marks) : 1;
     d.querySelector('.ex').value = q.explanation || '';
+    d.querySelector('.ma').value = q.model_answer || '';
+    if (q.min_words != null) d.querySelector('.wmin').value = q.min_words;
+    if (q.max_words != null) d.querySelector('.wmax').value = q.max_words;
     const ots = d.querySelectorAll('.ot');
     (Array.isArray(q.options) ? q.options : []).forEach((o, i) => { if (ots[i]) ots[i].value = o; });
-    const r = d.querySelector('input[type=radio][value="' + q.correct_index + '"]');
-    if (r) r.checked = true;
+    if (q.correct_index != null) {
+      const r = d.querySelector('input[type=radio][value="' + q.correct_index + '"]');
+      if (r) r.checked = true;
+    }
+    sync();
   }
   d.querySelector('.x').onclick = () => {
     if (document.querySelectorAll('.qcard').length > 1) { d.remove(); renumber(); }
@@ -326,6 +365,12 @@ function addQ(q) {
   renumber();
   return d;
 }
+
+$('addW').onclick = () => {
+  const d = addQ({ qtype: 'written' });
+  d.querySelector('.qt').focus();
+  d.scrollIntoView({ behavior: 'smooth', block: 'center' });
+};
 
 $('addQ').onclick = () => {
   const d = addQ();
@@ -430,13 +475,26 @@ $('saveBtn').onclick = async () => {
   const cards = [...document.querySelectorAll('.qcard')];
   for (let i = 0; i < cards.length; i++) {
     const c = cards[i];
+    const n = i + 1;
+    const type = c.querySelector('.qtype').value;
     const text = c.querySelector('.qt').value.trim();
-    const opts = [...c.querySelectorAll('.ot')].map((o) => o.value.trim());
-    const ch = c.querySelector('input[type=radio]:checked');
-    if (!text || opts.some((o) => !o)) return fail('Question ' + (i + 1) + ': fill in the question and all four options.');
-    if (!ch) return fail('Question ' + (i + 1) + ': choose the correct answer.');
-    qs.push({ text, options: opts, correct_index: parseInt(ch.value, 10),
-      explanation: c.querySelector('.ex').value.trim() || null, position: i + 1 });
+    const marks = parseFloat(c.querySelector('.qmarks').value);
+    if (!text) return fail('Question ' + n + ': type the question.');
+    if (!(marks >= 0)) return fail('Question ' + n + ': enter the marks.');
+    if (type === 'written') {
+      const wmin = parseInt(c.querySelector('.wmin').value, 10) || 0;
+      const wmax = parseInt(c.querySelector('.wmax').value, 10) || 0;
+      if (wmax && wmin > wmax) return fail('Question ' + n + ': minimum words cannot be more than maximum words.');
+      qs.push({ text, options: [], correct_index: null, qtype: 'written', marks, explanation: null,
+        model_answer: c.querySelector('.ma').value.trim() || null, min_words: wmin, max_words: wmax, position: n });
+    } else {
+      const opts = [...c.querySelectorAll('.ot')].map((o) => o.value.trim());
+      const ch = c.querySelector('input[type=radio]:checked');
+      if (opts.some((o) => !o)) return fail('Question ' + n + ': fill in all four options.');
+      if (!ch) return fail('Question ' + n + ': choose the correct answer.');
+      qs.push({ text, options: opts, correct_index: parseInt(ch.value, 10), qtype: 'mcq', marks,
+        explanation: c.querySelector('.ex').value.trim() || null, model_answer: null, position: n });
+    }
   }
 
   $('saveBtn').disabled = true;
@@ -571,7 +629,8 @@ $('list').onclick = async (e) => {
     if (d3) return say(msg, d3.message, 'err');
     const { error: d4 } = await sb.from('questions').insert((qs0 || []).map((x) => ({
       quiz_id: nq.id, text: x.text, options: x.options, correct_index: x.correct_index,
-      explanation: x.explanation, position: x.position })));
+      explanation: x.explanation, qtype: x.qtype, marks: x.marks, model_answer: x.model_answer,
+      min_words: x.min_words, max_words: x.max_words, position: x.position })));
     if (d4) { await sb.from('quizzes').delete().eq('id', nq.id); return say(msg, d4.message, 'err'); }
     say(msg, 'Copied as a new draft with a new code.', 'ok');
     return loadQuizzes();
@@ -611,6 +670,7 @@ let resRows = [], resQs = [], resQuiz = null, quizCache = [];
 const pct = (a) => (a.total ? Math.round((a.score * 100) / a.total) : 0);
 const nViol = (a) => (Array.isArray(a.violations) ? a.violations.length : 0);
 const chosen = (a, q) => {
+  if (q.qtype === 'written') return -1;
   const v = a.answers ? a.answers[q.id] : undefined;
   if (v === undefined || v === null || v === '') return -1;
   const i = parseInt(v, 10);
@@ -650,6 +710,7 @@ async function loadResults() {
   if (a.error) return say($('resMsg'), a.error.message, 'err');
   resRows = a.data || [];
   resQs = q.error ? [] : (q.data || []);
+  $('aiCard').classList.toggle('hide', !resQs.some((x) => x.qtype === 'written'));
   $('resTools').classList.remove('hide');
   updateRel();
   renderResults();
@@ -692,6 +753,31 @@ $('revBtn').onclick = async () => {
   say($('resMsg'), next ? 'Answers and feedback are now visible to students (after results are released).' : 'Answers and feedback hidden.', 'ok');
 };
 
+function writtenHtml(a, q, i) {
+  const txt = a.answers && typeof a.answers[q.id] === 'string' ? a.answers[q.id] : '';
+  const words = txt.trim() ? txt.trim().split(/\s+/).length : 0;
+  const g = a.written_grades ? a.written_grades[q.id] : null;
+  const max = Number(q.marks);
+  let h = '<div class="ans ' + (g && Number(g.marks) >= max * 0.5 ? 'good' : 'bad') + '">Q' + (i + 1) +
+    ' (written, ' + max + ' marks): ' + esc(q.text) +
+    '<br><b>Answer (' + words + ' words):</b><br><span style="white-space:pre-wrap">' + (esc(txt) || '<i>No answer</i>') + '</span>' +
+    '<br><b>Marks:</b> <input class="mk" type="number" min="0" max="' + max + '" step="0.5" value="' + (g ? Number(g.marks) : '') +
+    '" style="width:90px;display:inline-block;padding:6px 8px"> / ' + max +
+    ' <button class="sm" type="button" data-savemk="' + esc(a.id) + '|' + esc(q.id) + '">Save marks</button>';
+  if (g) {
+    if (g.summary) h += '<br><b>Feedback:</b> ' + esc(g.summary);
+    (Array.isArray(g.mistakes) ? g.mistakes : []).forEach((m) => {
+      h += '<div style="margin-top:6px;padding-left:8px;border-left:2px solid var(--line)"><b>' + esc(m.type) + '</b>' +
+        (m.quote ? ': &ldquo;' + esc(m.quote) + '&rdquo;' : '') + '<br>' + esc(m.explanation) +
+        '<br><span style="color:var(--ok)">Correct: ' + esc(m.correction) + '</span></div>';
+    });
+    if (g.edited) h += '<br><small>(marks edited by you)</small>';
+  } else {
+    h += '<br><small>Not graded yet.</small>';
+  }
+  return h + '</div>';
+}
+
 function detailHtml(a) {
   let h = '';
   const v = Array.isArray(a.violations) ? a.violations : [];
@@ -701,6 +787,7 @@ function detailHtml(a) {
   }
   h += '<div style="margin-top:8px"><b>Answers:</b></div>';
   resQs.forEach((q, i) => {
+    if (q.qtype === 'written') { h += writtenHtml(a, q, i); return; }
     const idx = chosen(a, q);
     const ok = idx === q.correct_index;
     const opts = Array.isArray(q.options) ? q.options : [];
@@ -737,8 +824,15 @@ function renderResults() {
   $('chartViol').innerHTML = bars(['0', '1', '2', '3+'], v);
 
   $('chartQ').innerHTML = resQs.length
-    ? bars(resQs.map((_, i) => 'Q' + (i + 1)),
-        resQs.map((q) => Math.round(resRows.filter((a) => chosen(a, q) === q.correct_index).length * 100 / n)), 100, '%')
+    ? bars(resQs.map((q, i) => 'Q' + (i + 1) + (q.qtype === 'written' ? 'w' : '')),
+        resQs.map((q) => {
+          if (q.qtype === 'written') {
+            const gs = resRows.map((a) => (a.written_grades ? a.written_grades[q.id] : null)).filter(Boolean);
+            if (!gs.length || !(Number(q.marks) > 0)) return 0;
+            return Math.round(gs.reduce((s, g) => s + Number(g.marks || 0), 0) * 100 / (gs.length * Number(q.marks)));
+          }
+          return Math.round(resRows.filter((a) => chosen(a, q) === q.correct_index).length * 100 / n);
+        }), 100, '%')
     : '';
 
   let h = '<thead><tr><th>#</th><th>Name</th><th>Roll</th><th>Score</th><th>%</th><th>Viol.</th><th>Auto</th><th>Submitted</th></tr></thead><tbody>';
@@ -753,11 +847,77 @@ function renderResults() {
   $('resTable').innerHTML = h + '</tbody>';
 }
 
-$('resTable').onclick = (e) => {
+$('resTable').onclick = async (e) => {
+  const sv = e.target.closest('[data-savemk]');
+  if (sv) {
+    const parts = sv.dataset.savemk.split('|');
+    const inp = sv.closest('.ans').querySelector('.mk');
+    return saveMark(parts[0], parts[1], inp.value);
+  }
   const tr = e.target.closest('tr.r');
   if (!tr) return;
   const d = $('d' + tr.dataset.i);
   if (d) d.classList.toggle('hide');
+};
+
+async function saveMark(attId, qid, val) {
+  const a = resRows.find((x) => x.id === attId);
+  const q = resQs.find((x) => x.id === qid);
+  if (!a || !q) return;
+  const raw = parseFloat(val);
+  if (!(raw >= 0)) return say($('resMsg'), 'Enter a number for the marks.', 'err');
+  const m = Math.max(0, Math.min(Number(q.marks), Math.round(raw * 2) / 2));
+  const g = Object.assign({}, a.written_grades || {});
+  g[qid] = Object.assign({ max: Number(q.marks), summary: '', mistakes: [] }, g[qid] || {}, { marks: m, edited: true });
+  const ws = resQs.filter((x) => x.qtype === 'written')
+    .reduce((s, x) => s + (g[x.id] ? Number(g[x.id].marks) || 0 : 0), 0);
+  const base = a.mcq_score != null ? Number(a.mcq_score) : Number(a.score) - Number(a.written_score || 0);
+  const upd = { written_grades: g, written_score: ws, score: base + ws, written_graded_at: a.written_graded_at || new Date().toISOString() };
+  const { error } = await sb.from('attempts').update(upd).eq('id', attId);
+  if (error) return say($('resMsg'), error.message, 'err');
+  const idx = resRows.indexOf(a);
+  Object.assign(a, upd);
+  renderResults();
+  const d = $('d' + idx);
+  if (d) d.classList.remove('hide');
+  say($('resMsg'), 'Marks saved.', 'ok');
+}
+
+async function fnError(error, data) {
+  if (data && data.error) return String(data.error);
+  try {
+    if (error && error.context && error.context.json) {
+      const j = await error.context.json();
+      if (j && j.error) return String(j.error);
+    }
+  } catch (_) {}
+  return (error && error.message) || 'Unknown error';
+}
+
+$('aiBtn').onclick = async () => {
+  const msg = $('aiMsg');
+  const again = $('aiRe').checked;
+  const todo = resRows.filter((a) => again || !a.written_graded_at);
+  if (!todo.length) return say(msg, 'Everything is already graded.', 'ok');
+  if (!confirm('Send the written answers of ' + todo.length + ' student(s) to the AI for marking? Student names are not sent.')) return;
+  $('aiBtn').disabled = true;
+  let done = 0, failed = 0, lastErr = '';
+  for (const a of todo) {
+    say(msg, 'Grading ' + (done + failed + 1) + ' of ' + todo.length + '... please keep this page open.');
+    let ok = false;
+    for (let t = 0; t < 3 && !ok; t++) {
+      const { data, error } = await sb.functions.invoke('grade-written', { body: { attempt_id: a.id, regrade: again } });
+      if (!error && data && !data.error) { ok = true; break; }
+      lastErr = await fnError(error, data);
+      if (!/429|rate|quota|RESOURCE_EXHAUSTED|overloaded|503/i.test(lastErr)) break;
+      await new Promise((r) => setTimeout(r, 15000 * (t + 1)));
+    }
+    if (ok) done++; else failed++;
+    await new Promise((r) => setTimeout(r, 4500));
+  }
+  $('aiBtn').disabled = false;
+  await loadResults();
+  say($('aiMsg'), 'Graded ' + done + ' of ' + todo.length + '.' + (failed ? ' ' + failed + ' failed: ' + lastErr : ' Check the marks, then release the results.'), failed ? 'err' : 'ok');
 };
 $('resQuiz').onchange = loadResults;
 $('resRefresh').onclick = async () => { await loadResultQuizzes(); await loadResults(); };
@@ -773,10 +933,13 @@ function fmtDate(a) { return a.submitted_at ? new Date(a.submitted_at).toLocaleS
 function matrix() {
   const head = ['#', 'Name', 'Roll No', 'Score', 'Total', 'Percent', 'Violations', 'Auto submitted', 'Submitted']
     .concat(resQs.map((_, i) => 'Q' + (i + 1)));
-  const correct = ['', 'CORRECT ANSWER', '', '', '', '', '', '', '']
-    .concat(resQs.map((q) => LETTERS[q.correct_index]));
+  const correct = ['', 'CORRECT ANSWER / MAX MARKS', '', '', '', '', '', '', '']
+    .concat(resQs.map((q) => (q.qtype === 'written' ? 'max ' + Number(q.marks) : LETTERS[q.correct_index])));
   const rows = resRows.map((a, i) => [i + 1, a.student_name, a.roll_no, a.score, a.total, pct(a), nViol(a),
-    a.auto_submitted ? 'Yes' : 'No', fmtDate(a)].concat(resQs.map((q) => { const c = chosen(a, q); return c >= 0 ? LETTERS[c] : '-'; })));
+    a.auto_submitted ? 'Yes' : 'No', fmtDate(a)].concat(resQs.map((q) => {
+      if (q.qtype === 'written') { const g = a.written_grades ? a.written_grades[q.id] : null; return g ? Number(g.marks) : '-'; }
+      const c = chosen(a, q); return c >= 0 ? LETTERS[c] : '-';
+    })));
   return [head, correct].concat(rows);
 }
 

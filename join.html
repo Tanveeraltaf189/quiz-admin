@@ -3,76 +3,88 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Join quiz - QuizSecure</title>
+<meta name="theme-color" content="#16213e">
+<title>Join a Quiz · QuizSecure</title>
 <style>
-  :root { --bg:#16213E; --card:#1E2D52; --line:#2C3E6B; --gold:#F5B740; --text:#F6F7FB; --sub:#A9B4D0; }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text);
-    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-  .wrap { max-width: 460px; margin: 0 auto; padding: 28px 20px 40px; text-align: center; }
-  h1 { font-size: 26px; margin: 18px 0 6px; }
-  p { color: var(--sub); line-height: 1.5; }
-  .code { display: inline-block; margin: 14px 0 6px; padding: 14px 26px; border-radius: 16px;
-    border: 2px dashed var(--gold); color: var(--gold); font-size: 34px; font-weight: 800; letter-spacing: 6px; }
-  a.btn, button { display: block; width: 100%; margin-top: 14px; padding: 15px; border-radius: 14px;
-    border: 0; font-size: 17px; font-weight: 800; text-decoration: none; text-align: center;
-    background: var(--gold); color: var(--bg); font-family: inherit; }
-  a.ghost, button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
-  .steps { text-align: left; background: var(--card); border-radius: 16px; padding: 14px 18px 14px 34px;
-    margin-top: 26px; color: var(--sub); font-size: 14px; line-height: 1.7; }
-  .msg { min-height: 20px; margin-top: 10px; color: #2FB67C; font-size: 14px; }
-  .hide { display: none; }
+:root{--bg:#10182d;--card:#1e2d52;--line:#33466f;--gold:#f5b740;--text:#f6f7fb;--sub:#a9b4d0;--ok:#2fb67c;--bad:#ff777b}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;padding:22px;background:radial-gradient(ellipse at top,#23365d 0%,var(--bg) 58%);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;display:grid;place-items:center}
+main{width:100%;max-width:440px}
+.brand{text-align:center;margin-bottom:22px}
+.logo{width:64px;height:64px;margin:0 auto 12px;border:1px solid #52648a;border-radius:20px;display:grid;place-items:center;background:var(--card);color:var(--gold);font-size:30px;font-weight:900}
+h1{font-size:28px;margin:0 0 6px;letter-spacing:-.5px}
+.sub{color:var(--sub);margin:0;line-height:1.55}
+.card{background:rgba(30,45,82,.94);border:1px solid var(--line);border-radius:20px;padding:22px;box-shadow:0 18px 50px #0003}
+label{display:block;color:var(--sub);font-size:14px;margin:14px 0 7px}
+input{width:100%;background:#111b33;color:var(--text);border:1px solid var(--line);border-radius:12px;padding:15px;font-size:18px;text-transform:uppercase;letter-spacing:2px;outline:none}
+input:focus{border-color:var(--gold);box-shadow:0 0 0 2px #f5b74033}
+button,.download{width:100%;display:block;text-align:center;border:0;border-radius:12px;padding:14px 16px;font:700 16px system-ui;cursor:pointer;text-decoration:none}
+.primary{margin-top:16px;background:var(--gold);color:#16213e}
+.secondary{margin-top:10px;background:transparent;color:var(--text);border:1px solid var(--line)}
+.note{font-size:13px;line-height:1.5;color:var(--sub);margin:16px 0 0}
+.msg{min-height:20px;margin-top:12px;font-size:14px;color:var(--bad);line-height:1.4}
+.steps{margin-top:16px;padding-top:16px;border-top:1px solid var(--line);font-size:13px;line-height:1.6;color:var(--sub)}
+footer{text-align:center;color:var(--sub);font-size:12px;margin-top:18px}
+.hide{display:none!important}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <svg width="84" height="84" viewBox="0 0 84 84" aria-hidden="true">
-    <rect width="84" height="84" rx="20" fill="#22345C"/>
-    <circle cx="42" cy="42" r="25" fill="none" stroke="#F5B740" stroke-width="6" stroke-linecap="round" stroke-dasharray="120 160" transform="rotate(-90 42 42)"/>
-    <path d="M31 43l8 8 15-17" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
-  </svg>
-  <h1>You are invited to a quiz</h1>
-  <p>Your quiz code:</p>
-  <div class="code" id="code">-</div>
-
-  <a class="btn" id="open" href="#">Open in QuizSecure app</a>
-  <a class="btn ghost" id="apk" href="#">Download the app</a>
-  <button class="ghost" id="copy" type="button">Copy quiz code</button>
-  <div class="msg" id="msg"></div>
-
-  <ol class="steps">
-    <li>Install the QuizSecure app (tap Download the app). Android may ask you to allow installs from this source.</li>
-    <li>Come back to this page and tap <b>Open in QuizSecure app</b>. The code fills in automatically.</li>
-    <li>Enter your name and roll number, then download the quiz.</li>
-  </ol>
-  <p id="ios" class="hide">This app works on Android phones only.</p>
-</div>
-
+<main>
+  <header class="brand">
+    <div class="logo" aria-hidden="true">Q</div>
+    <h1>QuizSecure</h1>
+    <p class="sub">Join your teacher’s quiz</p>
+  </header>
+  <section class="card">
+    <p class="sub">Enter the quiz code shared by your teacher, then open the QuizSecure app.</p>
+    <form id="joinForm">
+      <label for="code">Quiz code</label>
+      <input id="code" name="code" maxlength="32" autocomplete="off" autocapitalize="characters" placeholder="E.G. A7K9PQ" required>
+      <button class="primary" type="submit">Open QuizSecure app</button>
+    </form>
+    <div id="msg" class="msg" role="status" aria-live="polite"></div>
+    <a id="download" class="download secondary hide" href="#" rel="noopener">Download QuizSecure app</a>
+    <p class="note">If the app is already installed, tap “Open QuizSecure app”. If it does not open, install the app first and try again.</p>
+    <div class="steps">
+      <b style="color:var(--text)">How it works</b><br>
+      1. Enter the exact code from your teacher.<br>
+      2. Open QuizSecure and enter your name and roll number.<br>
+      3. Wait for your teacher to start the test.
+    </div>
+  </section>
+  <footer>QuizSecure · Use only the quiz code provided by your teacher.</footer>
+</main>
 <script>
-// Paste the link where you uploaded the APK (for example a Google Drive share link).
-const APK_URL = 'PASTE_YOUR_APK_DOWNLOAD_LINK_HERE';
-const SCHEME = 'quizsecure';
+/*
+  BEFORE PUBLISHING:
+  After your EAS Android build finishes, paste its direct APK download URL
+  into APK_DOWNLOAD_URL below. Keep this page and the app's scheme "quizsecure".
+*/
+const APK_DOWNLOAD_URL = 'PASTE_YOUR_EAS_APK_DOWNLOAD_URL_HERE';
 
-const code = (new URLSearchParams(location.search).get('code') || '')
-  .toUpperCase().replace(/[^A-Z0-9]/g, '');
-document.getElementById('code').textContent = code || '-';
+const codeInput = document.getElementById('code');
+const msg = document.getElementById('msg');
+const download = document.getElementById('download');
+const params = new URLSearchParams(location.search);
+const initialCode = (params.get('code') || '').trim().toUpperCase();
+if (initialCode) codeInput.value = initialCode;
 
-const hasApk = /^https?:\/\//.test(APK_URL);
-let intent = 'intent://join/' + code + '#Intent;scheme=' + SCHEME;
-if (hasApk) intent += ';S.browser_fallback_url=' + encodeURIComponent(APK_URL);
-intent += ';end';
+if (APK_DOWNLOAD_URL.startsWith('https://') && !APK_DOWNLOAD_URL.includes('PASTE_YOUR')) {
+  download.href = APK_DOWNLOAD_URL;
+  download.classList.remove('hide');
+}
 
-document.getElementById('open').href = intent;
-const apk = document.getElementById('apk');
-if (hasApk) apk.href = APK_URL; else apk.classList.add('hide');
-
-if (!/Android/i.test(navigator.userAgent)) document.getElementById('ios').classList.remove('hide');
-
-document.getElementById('copy').onclick = async () => {
-  const msg = document.getElementById('msg');
-  try { await navigator.clipboard.writeText(code); msg.textContent = 'Code copied: ' + code; }
-  catch (e) { msg.textContent = 'Your code is ' + code; }
-};
+document.getElementById('joinForm').addEventListener('submit', function (event) {
+  event.preventDefault();
+  const code = codeInput.value.trim().toUpperCase();
+  if (!code || !/^[A-Z0-9]+$/.test(code)) {
+    msg.textContent = 'Please enter a valid quiz code using letters and numbers only.';
+    return;
+  }
+  msg.textContent = 'Opening QuizSecure… If nothing happens, make sure the app is installed.';
+  const deepLink = 'quizsecure://join/' + encodeURIComponent(code);
+  location.href = deepLink;
+});
 </script>
 </body>
 </html>
