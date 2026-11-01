@@ -113,6 +113,7 @@
     <button data-tab="tabNew" class="on">New quiz</button>
     <button data-tab="tabList">My quizzes</button>
     <button data-tab="tabRes">Results</button>
+    <button data-tab="tabApp">App update</button>
     <button data-tab="tabCls">Classes</button>
   </nav>
 
@@ -166,6 +167,7 @@
     <div id="tabRes" class="hide">
       <label class="f">Quiz<select id="resQuiz"><option value="">Select a quiz</option></select></label>
       <button id="resRefresh" class="ghost full" type="button">Refresh results</button>
+      <button id="pdfAllBtn" class="ghost full" type="button">Download PDF of all students</button>
       <div id="resMsg" class="msg"></div>
       <div id="resTools" class="hide">
         <div class="item">
@@ -212,6 +214,23 @@
         <p class="hint" style="margin-top:0">Tap a row to see that student's answers and violations.</p>
         <div class="tbl"><table id="resTable"></table></div>
       </div>
+    </div>
+
+    <!-- APP UPDATE -->
+    <div id="tabApp" class="hide">
+      <h2 style="margin-top:4px">Update popup for students</h2>
+      <p class="hint">Steps: 1) If you changed app code, publish it first in Termux with <b>eas update --branch preview --message "..."</b>. 2) Press <b>Show update popup</b> here. Students then tap <b>Update now</b>, and the app updates itself. If that fails, it opens the APK link below.</p>
+      <label class="f">APK download link (fallback)<input id="appApk" type="text" placeholder="https://drive.google.com/..."></label>
+      <label class="f">Message shown in the popup<textarea id="appMessage" rows="3" placeholder="e.g. A new version is ready with better answer review."></textarea></label>
+      <label class="f" style="display:flex;align-items:center;gap:12px">
+        <input id="appOta" type="checkbox" checked style="width:24px;height:24px;flex:none;accent-color:var(--gold)">
+        <span>Allow in-app update (Expo)</span>
+      </label>
+      <button id="appSave" class="ghost full" type="button">Save settings</button>
+      <div id="appStatus" class="meta" style="margin-top:14px"></div>
+      <button id="appShow" class="full" type="button">Show update popup to students</button>
+      <button id="appHide" class="danger full" type="button">Hide popup</button>
+      <div id="appMsg" class="msg"></div>
     </div>
 
     <!-- CLASSES -->
@@ -287,9 +306,10 @@ $('out').onclick = async () => { await sb.auth.signOut(); show('login'); };
 document.querySelectorAll('.tabs button').forEach((b) => {
   b.onclick = () => {
     document.querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('on', x === b));
-    ['tabNew', 'tabList', 'tabRes', 'tabCls'].forEach((t) => $(t).classList.toggle('hide', t !== b.dataset.tab));
+    ['tabNew', 'tabList', 'tabRes', 'tabApp', 'tabCls'].forEach((t) => $(t).classList.toggle('hide', t !== b.dataset.tab));
     if (b.dataset.tab === 'tabList') loadQuizzes();
     if (b.dataset.tab === 'tabRes') loadResultQuizzes();
+    if (b.dataset.tab === 'tabApp') loadAppCfg();
   };
 });
 const goTab = (t) => document.querySelector('.tabs button[data-tab="' + t + '"]').click();
@@ -779,7 +799,7 @@ function writtenHtml(a, q, i) {
 }
 
 function detailHtml(a) {
-  let h = '';
+  let h = '<div style="margin-bottom:8px"><button class="sm" type="button" data-pdfone="' + esc(a.id) + '">Download this student\'s PDF</button></div>';
   const v = Array.isArray(a.violations) ? a.violations : [];
   if (v.length) {
     h += '<div><b>Violations:</b> ' + v.map((x) =>
@@ -848,6 +868,8 @@ function renderResults() {
 }
 
 $('resTable').onclick = async (e) => {
+  const pb = e.target.closest('[data-pdfone]');
+  if (pb) { const one = resRows.find((x) => x.id === pb.dataset.pdfone); if (one) printReport([one]); return; }
   const sv = e.target.closest('[data-savemk]');
   if (sv) {
     const parts = sv.dataset.savemk.split('|');
@@ -907,6 +929,7 @@ $('aiBtn').onclick = async () => {
     let ok = false;
     for (let t = 0; t < 3 && !ok; t++) {
       const { data, error } = await sb.functions.invoke('grade-written', { body: { attempt_id: a.id, regrade: again } });
+      if (!error && data && data.skipped) { lastErr = 'no written questions found for this attempt (check the question type in the database)'; break; }
       if (!error && data && !data.error) { ok = true; break; }
       lastErr = await fnError(error, data);
       if (!/429|rate|quota|RESOURCE_EXHAUSTED|overloaded|503/i.test(lastErr)) break;
@@ -921,6 +944,83 @@ $('aiBtn').onclick = async () => {
 };
 $('resQuiz').onchange = loadResults;
 $('resRefresh').onclick = async () => { await loadResultQuizzes(); await loadResults(); };
+
+// ---- PDF report (same layout the student gets, with every mistake and correction) ----
+const REPORT_CSS = 'body{font-family:Arial,Helvetica,sans-serif;padding:22px;color:#111}h1{margin:0 0 4px}h2{margin:6px 0 18px;color:#16213E}' +
+  '.q{border:1px solid #ccd;border-radius:8px;padding:12px;margin:12px 0;page-break-inside:avoid}h3{margin:0 0 6px;font-size:15px}' +
+  '.ans{background:#f6f7fb;padding:8px;border-radius:6px;line-height:1.5}mark{background:#ffd54f}.ok{color:#1b7f55}li{margin-bottom:8px}';
+
+function markSegmentsA(text, mistakes) {
+  const t = String(text || '');
+  const ranges = [];
+  (mistakes || []).forEach((m) => {
+    const q = m && m.quote ? String(m.quote).trim() : '';
+    if (!q) return;
+    let from = 0, idx = t.indexOf(q, from);
+    while (idx !== -1) {
+      const end = idx + q.length;
+      if (!ranges.some((r) => idx < r.end && end > r.start)) { ranges.push({ start: idx, end }); break; }
+      from = idx + 1; idx = t.indexOf(q, from);
+    }
+  });
+  ranges.sort((x, y) => x.start - y.start);
+  const out = []; let pos = 0;
+  ranges.forEach((r) => {
+    if (r.start > pos) out.push({ t: t.slice(pos, r.start), bad: false });
+    out.push({ t: t.slice(r.start, r.end), bad: true }); pos = r.end;
+  });
+  if (pos < t.length) out.push({ t: t.slice(pos), bad: false });
+  return out.length ? out : [{ t, bad: false }];
+}
+
+function reportBodyHtml(a) {
+  let body = '', wrongMcq = 0;
+  resQs.forEach((q, i) => {
+    if (q.qtype === 'written') {
+      const g = a.written_grades ? a.written_grades[q.id] : null;
+      const txt = a.answers && typeof a.answers[q.id] === 'string' ? a.answers[q.id] : '';
+      const segs = markSegmentsA(txt, g ? g.mistakes : [])
+        .map((p) => (p.bad ? '<mark>' + esc(p.t) + '</mark>' : esc(p.t))).join('').replace(/\n/g, '<br>');
+      const list = (g && Array.isArray(g.mistakes) ? g.mistakes : []).map((m) =>
+        '<li><b>' + esc(m.type) + '</b>' + (m.quote ? ': &ldquo;' + esc(m.quote) + '&rdquo;' : '') +
+        '<br>' + esc(m.explanation) + '<br><span class="ok">Correct: ' + esc(m.correction) + '</span></li>').join('');
+      body += '<div class="q"><h3>Question ' + (i + 1) + ' (written): ' + (g ? Number(g.marks) : 'not graded') +
+        ' / ' + Number(q.marks) + ' marks</h3><p><b>' + esc(q.text) + '</b></p><p class="ans">' +
+        (segs || '<i>No answer written</i>') + '</p>' + (g && g.summary ? '<p><b>Feedback:</b> ' + esc(g.summary) + '</p>' : '') +
+        (list ? '<p><b>Mistakes and corrections</b></p><ol>' + list + '</ol>' : '<p class="ok">No mistakes found.</p>') + '</div>';
+    } else {
+      const opts = Array.isArray(q.options) ? q.options : [];
+      const ch = chosen(a, q);
+      if (ch === q.correct_index) return;
+      wrongMcq++;
+      body += '<div class="q"><h3>Question ' + (i + 1) + ' (MCQ): wrong</h3><p><b>' + esc(q.text) + '</b></p>' +
+        '<p>Answer chosen: ' + (ch >= 0 ? esc(opts[ch]) : 'not answered') + '</p>' +
+        '<p class="ok">Correct answer: ' + esc(opts[q.correct_index]) + '</p>' +
+        (q.explanation ? '<p><b>Feedback:</b> ' + esc(q.explanation) + '</p>' : '') + '</div>';
+    }
+  });
+  const pct = a.total ? Math.round((Number(a.score) * 100) / Number(a.total)) : 0;
+  return '<div class="page"><h1>' + esc(resQuiz ? resQuiz.title : 'Quiz result') + '</h1><div>' +
+    esc(a.student_name) + ' &middot; Roll ' + esc(a.roll_no) + '</div><h2>Score: ' + Number(a.score) +
+    ' / ' + Number(a.total) + ' (' + pct + '%)</h2>' + (wrongMcq ? '<p>MCQs wrong: ' + wrongMcq + '</p>' : '') + body + '</div>';
+}
+
+// Opens the report in a new tab and starts the print dialog; choose "Save as PDF".
+// The page title becomes the default file name: "<test name> <date>".
+function printReport(list) {
+  if (!list.length) return say($('resMsg'), 'No students to print.', 'err');
+  const title = (resQuiz ? resQuiz.title : 'Results').replace(/[\\/:*?"<>|]+/g, ' ').trim() + ' ' + new Date().toISOString().slice(0, 10);
+  const pages = list.map((a) => reportBodyHtml(a)).join('<div style="page-break-after:always"></div>');
+  const w = window.open('', '_blank');
+  if (!w) return say($('resMsg'), 'Allow pop-ups for this site, then try again.', 'err');
+  // written in pieces so this script tag is not closed by mistake
+  const printer = '<scr' + 'ipt>window.onload=function(){setTimeout(function(){window.print();},400);};</scr' + 'ipt>';
+  w.document.write('<!doctype html><html><head><meta charset="utf-8"><title>' + esc(title) + '</title><style>' +
+    REPORT_CSS + '</style></head><body>' + pages + printer + '</body></html>');
+  w.document.close();
+}
+
+$('pdfAllBtn').onclick = () => printReport(resRows);
 
 const fname = (ext) => {
   const base = (resQuiz ? resQuiz.title : 'results').replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '');
@@ -1017,6 +1117,44 @@ setInterval(() => {
   if (!$('resQuiz').value || document.querySelector('tr.d:not(.hide)')) return;
   loadResults();
 }, 15000);
+
+/* ---------- App update popup ---------- */
+async function loadAppCfg() {
+  const m = $('appMsg');
+  const { data, error } = await sb.from('app_config').select('*').eq('id', 1).single();
+  if (error) return say(m, error.message + ' (run the app_config SQL first)', 'err');
+  $('appApk').value = data.apk_url || '';
+  $('appMessage').value = data.message || '';
+  $('appOta').checked = data.ota_enabled !== false;
+  $('appStatus').textContent = data.popup
+    ? 'Popup is ON. Students who have not dismissed it will see it when they are outside a test.'
+    : 'Popup is OFF. Students do not see it.';
+  say(m, '');
+}
+
+async function saveAppCfg(extra) {
+  const row = Object.assign({
+    apk_url: $('appApk').value.trim() || null,
+    message: $('appMessage').value.trim() || null,
+    ota_enabled: $('appOta').checked,
+  }, extra || {});
+  const { error } = await sb.from('app_config').update(row).eq('id', 1);
+  if (error) { say($('appMsg'), error.message, 'err'); return false; }
+  await loadAppCfg();
+  return true;
+}
+
+$('appSave').onclick = async () => {
+  if (await saveAppCfg()) say($('appMsg'), 'Settings saved.', 'ok');
+};
+$('appShow').onclick = async () => {
+  if (!confirm('Show the update popup to students now? Do this only after the new update is published.')) return;
+  if (await saveAppCfg({ popup: true, popup_id: new Date().toISOString() }))
+    say($('appMsg'), 'Popup is now shown to students (outside tests).', 'ok');
+};
+$('appHide').onclick = async () => {
+  if (await saveAppCfg({ popup: false })) say($('appMsg'), 'Popup hidden.', 'ok');
+};
 
 boot();
 </script>
