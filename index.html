@@ -89,6 +89,18 @@
   .ans.bad { border-left-color: var(--bad); }
   .editbar { background: #3a2f12; border: 1px solid var(--gold); color: var(--gold); border-radius: 12px;
     padding: 12px 14px; margin-top: 14px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .tm { margin-top: 6px; }
+  .tmbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 6px 0; }
+  .tmcol { width: 30px; height: 30px; border-radius: 50%; border: 2px solid rgba(255,255,255,.4); cursor: pointer; flex: none; }
+  .tmtext { white-space: pre-wrap; background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px; line-height: 1.7; user-select: text; -webkit-user-select: text; }
+  .tmtext mark.hl { color: #111; border-radius: 3px; padding: 0 1px; cursor: pointer; }
+  .tmtext mark.hl.pick { outline: 2px solid var(--gold); }
+  .tmtext mark[data-n]::after { content: attr(data-n); font-size: 10px; font-weight: 700; vertical-align: super; margin-left: 1px; }
+  .tmpick { font-size: 13px; color: var(--gold); margin-top: 6px; }
+  .tmnote { font-size: 13px; margin-top: 6px; }
+  .tmdot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+  .tmcomment { margin-top: 8px; font-size: 14px; padding: 10px; min-height: 60px; }
 </style>
 </head>
 <body>
@@ -114,6 +126,7 @@
     <button data-tab="tabList">My quizzes</button>
     <button data-tab="tabRes">Results</button>
     <button data-tab="tabApp">App update</button>
+    <button data-tab="tabAI">AI settings</button>
     <button data-tab="tabCls">Classes</button>
   </nav>
 
@@ -191,6 +204,7 @@
             <input id="aiRe" type="checkbox" style="width:22px;height:22px;flex:none;accent-color:var(--gold)">
             <span>Re-grade answers that are already graded</span>
           </label>
+          <label class="f">Grade with<select id="aiProv"><option value="">Default (main AI, then the others if it is busy)</option></select></label>
           <button id="aiBtn" class="full" type="button">Grade written answers with AI</button>
           <div id="aiMsg" class="msg"></div>
         </div>
@@ -213,6 +227,27 @@
         <h2>All submissions</h2>
         <p class="hint" style="margin-top:0">Tap a row to see that student's answers and violations.</p>
         <div class="tbl"><table id="resTable"></table></div>
+      </div>
+    </div>
+
+    <!-- AI SETTINGS -->
+    <div id="tabAI" class="hide">
+      <div class="item">
+        <b>AI marking</b>
+        <div class="meta" style="margin-top:6px">Choose which AI marks the written answers. If your main AI is busy or fails, the next ones in the list are tried automatically. API keys are kept in Supabase secrets and never appear on this page. MCQs are always marked from your answer key, not by AI.</div>
+        <label class="f">Main AI<select id="aiMain"></select></label>
+        <label class="f" style="display:flex;align-items:center;gap:12px">
+          <input id="aiFall" type="checkbox" style="width:22px;height:22px;flex:none;accent-color:var(--gold)">
+          <span>If it is busy or fails, try the next AI in the list below</span>
+        </label>
+      </div>
+      <div id="aiList"></div>
+      <button id="aiSave" class="full" type="button">Save AI settings</button>
+      <button id="aiCheck" class="ghost full" type="button">Check keys again</button>
+      <div id="aiSetMsg" class="msg"></div>
+      <div class="item">
+        <b>How to add a key</b>
+        <div class="hint">1. Get an API key from the AI's website. 2. In Supabase open Edge Functions, then Secrets, and add the key with the exact name shown under each AI above (for example GROQ_API_KEY). 3. Come back here and press "Check keys again": the AI shows "ready". 4. Press Test to try it. The order above is the order the AIs are tried when the main one is busy.</div>
       </div>
     </div>
 
@@ -306,10 +341,11 @@ $('out').onclick = async () => { await sb.auth.signOut(); show('login'); };
 document.querySelectorAll('.tabs button').forEach((b) => {
   b.onclick = () => {
     document.querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('on', x === b));
-    ['tabNew', 'tabList', 'tabRes', 'tabApp', 'tabCls'].forEach((t) => $(t).classList.toggle('hide', t !== b.dataset.tab));
+    ['tabNew', 'tabList', 'tabRes', 'tabApp', 'tabAI', 'tabCls'].forEach((t) => $(t).classList.toggle('hide', t !== b.dataset.tab));
     if (b.dataset.tab === 'tabList') loadQuizzes();
     if (b.dataset.tab === 'tabRes') loadResultQuizzes();
     if (b.dataset.tab === 'tabApp') loadAppCfg();
+    if (b.dataset.tab === 'tabAI') aiLoad();
   };
 });
 const goTab = (t) => document.querySelector('.tabs button[data-tab="' + t + '"]').click();
@@ -688,7 +724,14 @@ $('list').onclick = async (e) => {
 /* ---------- Results ---------- */
 let resRows = [], resQs = [], resQuiz = null, quizCache = [];
 const pct = (a) => (a.total ? Math.round((a.score * 100) / a.total) : 0);
-const nViol = (a) => (Array.isArray(a.violations) ? a.violations.length : 0);
+const nViol = (a) => (Array.isArray(a.violations) ? a.violations.filter((x) => !x.soft).length : 0);
+const nSoft = (a) => (Array.isArray(a.violations) ? a.violations.filter((x) => x.soft).length : 0);
+const vLabel = (x) => {
+  if (x.type === 'app_switch') return 'Left the app';
+  if (x.type === 'focus_lost') return 'Another window took focus for ' + (x.secs || '?') + ' s (floating app, pop-up or assistant?)';
+  if (x.type === 'accessibility_on') return 'An accessibility service was turned on';
+  return x.type;
+};
 const chosen = (a, q) => {
   if (q.qtype === 'written') return -1;
   const v = a.answers ? a.answers[q.id] : undefined;
@@ -729,7 +772,9 @@ async function loadResults() {
   ]);
   if (a.error) return say($('resMsg'), a.error.message, 'err');
   resRows = a.data || [];
+  Object.keys(tm).forEach((k) => { if (!tm[k].dirty) delete tm[k]; });
   resQs = q.error ? [] : (q.data || []);
+  if (!aiStat.length && !window.__aiTried) { window.__aiTried = true; aiStatus(); }
   $('aiCard').classList.toggle('hide', !resQs.some((x) => x.qtype === 'written'));
   $('resTools').classList.remove('hide');
   updateRel();
@@ -780,12 +825,13 @@ function writtenHtml(a, q, i) {
   const max = Number(q.marks);
   let h = '<div class="ans ' + (g && Number(g.marks) >= max * 0.5 ? 'good' : 'bad') + '">Q' + (i + 1) +
     ' (written, ' + max + ' marks): ' + esc(q.text) +
-    '<br><b>Answer (' + words + ' words):</b><br><span style="white-space:pre-wrap">' + (esc(txt) || '<i>No answer</i>') + '</span>' +
+    '<br><b>Answer (' + words + ' words):</b><br>' + tmBlockHtml(a, q) +
     '<br><b>Marks:</b> <input class="mk" type="number" min="0" max="' + max + '" step="0.5" value="' + (g ? Number(g.marks) : '') +
     '" style="width:90px;display:inline-block;padding:6px 8px"> / ' + max +
     ' <button class="sm" type="button" data-savemk="' + esc(a.id) + '|' + esc(q.id) + '">Save marks</button>';
   if (g) {
     if (g.summary) h += '<br><b>Feedback:</b> ' + esc(g.summary);
+    if (g.provider) h += '<br><small>Marked by ' + esc(AI_NAMES[g.provider] || g.provider) + (g.model ? ' (' + esc(g.model) + ')' : '') + '</small>';
     (Array.isArray(g.mistakes) ? g.mistakes : []).forEach((m) => {
       h += '<div style="margin-top:6px;padding-left:8px;border-left:2px solid var(--line)"><b>' + esc(m.type) + '</b>' +
         (m.quote ? ': &ldquo;' + esc(m.quote) + '&rdquo;' : '') + '<br>' + esc(m.explanation) +
@@ -801,9 +847,15 @@ function writtenHtml(a, q, i) {
 function detailHtml(a) {
   let h = '<div style="margin-bottom:8px"><button class="sm" type="button" data-pdfone="' + esc(a.id) + '">Download this student\'s PDF</button></div>';
   const v = Array.isArray(a.violations) ? a.violations : [];
-  if (v.length) {
-    h += '<div><b>Violations:</b> ' + v.map((x) =>
-      esc(x.type) + ' at ' + esc(new Date(x.at).toLocaleTimeString())).join(' &middot; ') + '</div>';
+  const hard = v.filter((x) => !x.soft);
+  const soft = v.filter((x) => x.soft);
+  if (hard.length) {
+    h += '<div><b>Violations (counted):</b> ' + hard.map((x) =>
+      esc(vLabel(x)) + ' at ' + esc(new Date(x.at).toLocaleTimeString())).join(' &middot; ') + '</div>';
+  }
+  if (soft.length) {
+    h += '<div style="margin-top:6px"><b>To review (not counted):</b> ' + soft.map((x) =>
+      esc(vLabel(x)) + ' at ' + esc(new Date(x.at).toLocaleTimeString())).join(' &middot; ') + '</div>';
   }
   h += '<div style="margin-top:8px"><b>Answers:</b></div>';
   resQs.forEach((q, i) => {
@@ -858,8 +910,9 @@ function renderResults() {
   let h = '<thead><tr><th>#</th><th>Name</th><th>Roll</th><th>Score</th><th>%</th><th>Viol.</th><th>Auto</th><th>Submitted</th></tr></thead><tbody>';
   resRows.forEach((a, i) => {
     const vc = nViol(a);
+    const sc = nSoft(a);
     h += '<tr class="r" data-i="' + i + '"><td>' + (i + 1) + '</td><td>' + esc(a.student_name) + '</td><td>' + esc(a.roll_no) +
-      '</td><td>' + a.score + ' / ' + a.total + '</td><td>' + pct(a) + '%</td><td' + (vc ? ' class="flag"' : '') + '>' + vc +
+      '</td><td>' + a.score + ' / ' + a.total + '</td><td>' + pct(a) + '%</td><td' + ((vc || sc) ? ' class="flag"' : '') + '>' + vc + (sc ? ' (+' + sc + ' to review)' : '') +
       '</td><td>' + (a.auto_submitted ? 'Yes' : 'No') + '</td><td>' +
       esc(a.submitted_at ? new Date(a.submitted_at).toLocaleString() : '') + '</td></tr>';
     h += '<tr class="d hide" id="d' + i + '"><td colspan="8">' + detailHtml(a) + '</td></tr>';
@@ -916,39 +969,488 @@ async function fnError(error, data) {
   return (error && error.message) || 'Unknown error';
 }
 
+/* ---------- Teacher marking: colour highlights and comments ---------- */
+const HL_COLORS = {
+  yellow: { name: 'Yellow', bg: '#fff176' },
+  green:  { name: 'Green',  bg: '#a5d6a7' },
+  red:    { name: 'Red',    bg: '#ef9a9a' },
+  blue:   { name: 'Blue',   bg: '#90caf9' },
+  pink:   { name: 'Pink',   bg: '#f8bbd0' },
+  orange: { name: 'Orange', bg: '#ffcc80' },
+  purple: { name: 'Purple', bg: '#ce93d8' },
+};
+const hlBg = (c) => (HL_COLORS[c] ? HL_COLORS[c].bg : HL_COLORS.yellow.bg);
+
+// Keeps highlights valid, in order, and never overlapping.
+function hlNormalize(list, len) {
+  const out = [];
+  (Array.isArray(list) ? list : []).forEach((h) => {
+    if (!h) return;
+    const s = Math.max(0, Math.floor(Number(h.s)));
+    const e = Math.min(len, Math.floor(Number(h.e)));
+    if (!(e > s)) return;
+    out.push({ s, e, c: HL_COLORS[h.c] ? h.c : 'yellow', n: String(h.n || '') });
+  });
+  out.sort((x, y) => x.s - y.s || x.e - y.e);
+  const res = [];
+  out.forEach((h) => {
+    const last = res[res.length - 1];
+    if (last && h.s < last.e) {
+      if (h.e <= last.e) return;
+      res.push({ s: last.e, e: h.e, c: h.c, n: h.n });
+    } else {
+      res.push(h);
+    }
+  });
+  return res;
+}
+
+// Removes the part [s, e) from every highlight.
+function hlCut(list, s, e) {
+  const out = [];
+  list.forEach((h) => {
+    if (h.e <= s || h.s >= e) { out.push(h); return; }
+    if (h.s < s) out.push({ s: h.s, e: s, c: h.c, n: h.n });
+    if (h.e > e) out.push({ s: e, e: h.e, c: h.c, n: h.n });
+  });
+  return out;
+}
+
+// Paints [s, e) in a colour. The new highlight wins over anything under it.
+function hlApply(list, s, e, c, n) {
+  const same = list.find((h) => h.s === s && h.e === e);
+  const note = n != null ? n : (same ? same.n : '');
+  return hlCut(list, s, e).concat([{ s, e, c, n: note }]).sort((x, y) => x.s - y.s);
+}
+
+const tm = {};          // working copy per answer: key -> { comment, highlights, dirty }
+let tmLast = null;      // last text selection: { key, s, e }
+let tmPicked = null;    // tapped highlight: { key, i }
+let tmToolPress = false;
+
+const answerText = (a, qid) => (a.answers && typeof a.answers[qid] === 'string' ? a.answers[qid] : '');
+
+function tmGet(a, qid) {
+  const key = a.id + '|' + qid;
+  if (!tm[key]) {
+    const saved = a.teacher_marks && a.teacher_marks[qid];
+    tm[key] = {
+      comment: saved && saved.comment ? String(saved.comment) : '',
+      highlights: hlNormalize(saved && saved.highlights, answerText(a, qid).length),
+      dirty: false,
+    };
+  }
+  return tm[key];
+}
+
+// The answer text with coloured highlights. Only plain text lives inside .tmtext, so the
+// character positions of a selection always match the original answer.
+function tmTextHtml(text, hls, pickIdx) {
+  const t = String(text || '');
+  if (!t) return '<i>No answer</i>';
+  let out = '';
+  let pos = 0;
+  let num = 0;
+  hls.forEach((h, i) => {
+    if (h.s > pos) out += esc(t.slice(pos, h.s));
+    const n = h.n ? ++num : 0;
+    out += '<mark class="hl' + (i === pickIdx ? ' pick' : '') + '" data-i="' + i + '"' + (n ? ' data-n="' + n + '"' : '') +
+      ' style="background:' + hlBg(h.c) + '">' + esc(t.slice(h.s, h.e)) + '</mark>';
+    pos = h.e;
+  });
+  return out + esc(t.slice(pos));
+}
+
+function tmNotesHtml(text, hls) {
+  const t = String(text || '');
+  let n = 0;
+  return hls.filter((h) => h.n).map((h) => {
+    n++;
+    return '<div class="tmnote"><span class="tmdot" style="background:' + hlBg(h.c) + '"></span><b>' + n + '.</b> &ldquo;' +
+      esc(t.slice(h.s, h.e).slice(0, 80)) + '&rdquo; &mdash; ' + esc(h.n) + '</div>';
+  }).join('');
+}
+
+function tmBlockHtml(a, q) {
+  const key = a.id + '|' + q.id;
+  const st = tmGet(a, q.id);
+  const txt = answerText(a, q.id);
+  return '<div class="tm" data-key="' + esc(key) + '">' +
+    '<div class="tmbar">' +
+    Object.keys(HL_COLORS).map((c) => '<span class="tmcol" data-tmc="' + c + '" style="background:' + HL_COLORS[c].bg +
+      '" title="' + HL_COLORS[c].name + '"></span>').join('') +
+    '<button class="sm ghost" type="button" data-tmact="note">Note</button>' +
+    '<button class="sm ghost" type="button" data-tmact="erase">Erase</button></div>' +
+    '<div class="tmtext" data-key="' + esc(key) + '">' + tmTextHtml(txt, st.highlights, -1) + '</div>' +
+    '<div class="tmpick"></div>' +
+    '<div class="tmnotes">' + tmNotesHtml(txt, st.highlights) + '</div>' +
+    '<textarea class="tmcomment" placeholder="Your comment for the student on this answer (optional)">' + esc(st.comment) + '</textarea>' +
+    '<div style="margin-top:6px"><button class="sm" type="button" data-tmsave="' + esc(key) + '">Save highlights &amp; comment</button> ' +
+    '<span class="tmstate meta">' + (st.dirty ? 'Unsaved changes' : '') + '</span></div>' +
+    '<div class="hint">Select words in the answer, then tap a colour. Tap a highlight to change its colour, add a note or remove it.</div></div>';
+}
+
+function tmRefresh(key) {
+  const parts = key.split('|');
+  const a = resRows.find((x) => x.id === parts[0]);
+  if (!a) return;
+  const st = tmGet(a, parts[1]);
+  const txt = answerText(a, parts[1]);
+  const pickIdx = tmPicked && tmPicked.key === key ? tmPicked.i : -1;
+  document.querySelectorAll('.tm').forEach((box) => {
+    if (box.dataset.key !== key) return;
+    box.querySelector('.tmtext').innerHTML = tmTextHtml(txt, st.highlights, pickIdx);
+    box.querySelector('.tmnotes').innerHTML = tmNotesHtml(txt, st.highlights);
+    box.querySelector('.tmstate').textContent = st.dirty ? 'Unsaved changes' : '';
+    const h = pickIdx >= 0 ? st.highlights[pickIdx] : null;
+    box.querySelector('.tmpick').innerHTML = h
+      ? 'Selected: &ldquo;' + esc(txt.slice(h.s, h.e).slice(0, 50)) + '&rdquo; &mdash; tap a colour to change it, Note to edit its note, Erase to remove it.'
+      : '';
+  });
+}
+
+// Where is the selection inside one answer text? (character positions)
+function tmSelection(box) {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
+  const r = sel.getRangeAt(0);
+  if (!box.contains(r.startContainer) || !box.contains(r.endContainer)) return null;
+  const pre = document.createRange();
+  pre.selectNodeContents(box);
+  pre.setEnd(r.startContainer, r.startOffset);
+  const s = pre.toString().length;
+  const e = s + r.toString().length;
+  return e > s ? { s, e } : null;
+}
+
+document.addEventListener('selectionchange', () => {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0) return;
+  if (sel.isCollapsed) { if (!tmToolPress) tmLast = null; return; }
+  const n = sel.anchorNode && (sel.anchorNode.nodeType === 1 ? sel.anchorNode : sel.anchorNode.parentElement);
+  const box = n && n.closest ? n.closest('.tmtext') : null;
+  if (!box) return;
+  const r = tmSelection(box);
+  if (r) { tmLast = { key: box.dataset.key, s: r.s, e: r.e }; tmPicked = null; }
+});
+
+function tmContext(el) {
+  const box = el.closest('.tm');
+  const key = box.dataset.key;
+  const parts = key.split('|');
+  const a = resRows.find((x) => x.id === parts[0]);
+  const st = a ? tmGet(a, parts[1]) : null;
+  const len = a ? answerText(a, parts[1]).length : 0;
+  let target = null;
+  if (tmLast && tmLast.key === key) target = { s: tmLast.s, e: Math.min(tmLast.e, len) };
+  else if (tmPicked && tmPicked.key === key && st && st.highlights[tmPicked.i]) {
+    const h = st.highlights[tmPicked.i];
+    target = { s: h.s, e: h.e };
+  }
+  return { box, key, a, st, len, target };
+}
+
+function tmDone(ctx) {
+  ctx.st.dirty = true;
+  tmLast = null;
+  tmPicked = null;
+  try { window.getSelection().removeAllRanges(); } catch (_) { /* ignore */ }
+  tmRefresh(ctx.key);
+}
+
+function tmNeedSelection(ctx) {
+  ctx.box.querySelector('.tmpick').textContent = 'Select some words in the answer first (or tap a highlight), then tap a colour.';
+}
+
+function tmColor(el) {
+  const ctx = tmContext(el);
+  if (!ctx.st) return;
+  if (!ctx.target) return tmNeedSelection(ctx);
+  ctx.st.highlights = hlNormalize(hlApply(ctx.st.highlights, ctx.target.s, ctx.target.e, el.dataset.tmc), ctx.len);
+  tmDone(ctx);
+}
+
+function tmNote(el) {
+  const ctx = tmContext(el);
+  if (!ctx.st) return;
+  if (!ctx.target) return tmNeedSelection(ctx);
+  const ex = ctx.st.highlights.find((h) => h.s === ctx.target.s && h.e === ctx.target.e);
+  const v = window.prompt('Note for the student about this part (leave it empty to remove the note):', ex ? ex.n : '');
+  if (v === null) return;
+  ctx.st.highlights = hlNormalize(hlApply(ctx.st.highlights, ctx.target.s, ctx.target.e, ex ? ex.c : 'yellow', v.trim().slice(0, 500)), ctx.len);
+  tmDone(ctx);
+}
+
+function tmErase(el) {
+  const ctx = tmContext(el);
+  if (!ctx.st) return;
+  if (!ctx.target) return tmNeedSelection(ctx);
+  ctx.st.highlights = hlNormalize(hlCut(ctx.st.highlights, ctx.target.s, ctx.target.e), ctx.len);
+  tmDone(ctx);
+}
+
+async function tmSave(key) {
+  const parts = key.split('|');
+  const a = resRows.find((x) => x.id === parts[0]);
+  if (!a) return;
+  const st = tmGet(a, parts[1]);
+  const len = answerText(a, parts[1]).length;
+  const marks = Object.assign({}, a.teacher_marks || {});
+  const clean = {
+    comment: String(st.comment || '').trim().slice(0, 2000),
+    highlights: hlNormalize(st.highlights, len).map((h) => ({ s: h.s, e: h.e, c: h.c, n: String(h.n || '').slice(0, 500) })),
+    at: new Date().toISOString(),
+  };
+  if (!clean.comment && !clean.highlights.length) delete marks[parts[1]]; else marks[parts[1]] = clean;
+  const { error } = await sb.from('attempts').update({ teacher_marks: marks }).eq('id', a.id);
+  if (error) return say($('resMsg'), 'Could not save: ' + error.message, 'err');
+  a.teacher_marks = marks;
+  st.dirty = false;
+  tmRefresh(key);
+  document.querySelectorAll('.tm').forEach((box) => {
+    if (box.dataset.key === key) box.querySelector('.tmstate').textContent = 'Saved \u2713';
+  });
+}
+
+(function tmWire() {
+  const tbl = $('resTable');
+  const hold = (e) => {
+    if (e.target.closest('.tmcol, [data-tmact]')) { tmToolPress = true; e.preventDefault(); }
+  };
+  tbl.addEventListener('pointerdown', hold);
+  tbl.addEventListener('mousedown', hold);
+  tbl.addEventListener('pointerup', () => { setTimeout(() => { tmToolPress = false; }, 300); });
+  tbl.addEventListener('click', (e) => {
+    const col = e.target.closest('.tmcol');
+    if (col) return tmColor(col);
+    const act = e.target.closest('[data-tmact]');
+    if (act) return act.dataset.tmact === 'note' ? tmNote(act) : tmErase(act);
+    const sv = e.target.closest('[data-tmsave]');
+    if (sv) return tmSave(sv.dataset.tmsave);
+    const mk = e.target.closest('.tmtext mark.hl');
+    const sel = window.getSelection();
+    if (mk && (!sel || sel.isCollapsed)) {
+      const key = mk.closest('.tm').dataset.key;
+      tmPicked = { key, i: Number(mk.dataset.i) };
+      tmLast = null;
+      tmRefresh(key);
+    }
+  });
+  tbl.addEventListener('input', (e) => {
+    if (!e.target.classList || !e.target.classList.contains('tmcomment')) return;
+    const box = e.target.closest('.tm');
+    const parts = box.dataset.key.split('|');
+    const a = resRows.find((x) => x.id === parts[0]);
+    if (!a) return;
+    const st = tmGet(a, parts[1]);
+    st.comment = e.target.value;
+    st.dirty = true;
+    box.querySelector('.tmstate').textContent = 'Unsaved changes';
+  });
+})();
+
+// Same text with colours, for the PDF (newlines become line breaks there).
+function tmReportHtml(text, hls) {
+  return tmTextHtml(text, hls, -1).replace(/\n/g, '<br>');
+}
+
+/* ---------- AI settings: choose, order and test the marking AIs ---------- */
+const GRADE_FN = 'grade-multi';
+const AI_NAMES = { gemini: 'Gemini', groq: 'Groq', xai: 'Grok (xAI)', mistral: 'Mistral', ollama: 'Ollama', custom: 'Custom 1', custom2: 'Custom 2' };
+const AI_HELP = {
+  gemini: 'Key name in Supabase secrets: GEMINI_API_KEY (Google AI Studio).',
+  groq: 'Key name in Supabase secrets: GROQ_API_KEY (console.groq.com).',
+  xai: 'Key name in Supabase secrets: XAI_API_KEY (console.x.ai).',
+  mistral: 'Key name in Supabase secrets: MISTRAL_API_KEY (console.mistral.ai).',
+  ollama: 'Needs the public https address of your Ollama server (for example through a tunnel) and a model name. Add OLLAMA_API_KEY only if your server asks for a key.',
+  custom: 'Any service with an OpenAI-style chat address. Key name: CUSTOM_API_KEY.',
+  custom2: 'Same as Custom 1. Key name: CUSTOM2_API_KEY.',
+};
+let aiWork = null;      // the settings being edited
+let aiStat = [];        // what the server says about each AI (key found? ready?)
+let aiDirty = false;
+
+const aiLabel = (id) => (aiWork && aiWork.config[id] && aiWork.config[id].label) || AI_NAMES[id] || id;
+
+function aiFillGradeSelect() {
+  const sel = $('aiProv');
+  if (!sel) return;
+  const keep = sel.value;
+  let h = '<option value="">Default (main AI, then the others if it is busy)</option>';
+  aiStat.filter((p) => p.usable).forEach((p) => { h += '<option value="' + esc(p.id) + '">' + esc(aiLabel(p.id)) + ' only</option>'; });
+  sel.innerHTML = h;
+  if ([].some.call(sel.options, (o) => o.value === keep)) sel.value = keep;
+}
+
+async function aiStatus() {
+  const { data, error } = await sb.functions.invoke(GRADE_FN, { body: { action: 'status' } });
+  aiStat = (!error && data && Array.isArray(data.providers)) ? data.providers : [];
+  aiFillGradeSelect();
+  return !error;
+}
+
+function aiRender() {
+  const w = aiWork;
+  $('aiMain').innerHTML = w.order.map((id) => '<option value="' + id + '"' + (id === w.provider ? ' selected' : '') + '>' + esc(aiLabel(id)) + '</option>').join('');
+  $('aiFall').checked = w.auto_fallback;
+  $('aiList').innerHTML = w.order.map((id, i) => {
+    const st = aiStat.find((x) => x.id === id) || {};
+    const c = w.config[id] || {};
+    const needsBase = id === 'ollama' || id === 'custom' || id === 'custom2';
+    const badge = st.usable ? '<span class="badge live">ready</span>'
+      : '<span class="badge ended">' + (st.hasKey || st.keyOptional ? 'finish set-up' : 'no key yet') + '</span>';
+    return '<div class="item" data-ai="' + id + '">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><div><b>' + (i + 1) + '. ' + esc(aiLabel(id)) + '</b>' + badge + '</div>' +
+      '<div><button class="sm ghost" type="button" data-aiup="' + id + '">&#9650;</button> <button class="sm ghost" type="button" data-aidown="' + id + '">&#9660;</button></div></div>' +
+      '<label class="f" style="display:flex;align-items:center;gap:12px"><input type="checkbox" data-aiena="' + id + '"' + (c.enabled !== false ? ' checked' : '') +
+      ' style="width:22px;height:22px;flex:none;accent-color:var(--gold)"><span>Use this AI</span></label>' +
+      '<label class="f">Model<input data-aimodel="' + id + '" value="' + esc(c.model || '') + '" placeholder="' + esc(st.model || 'model name') + '" autocapitalize="off" autocomplete="off"></label>' +
+      (needsBase ? '<label class="f">https address<input data-aibase="' + id + '" value="' + esc(c.base || '') + '" placeholder="https://your-server.example.com/v1" autocapitalize="off" autocomplete="off"></label>' : '') +
+      (id === 'custom' || id === 'custom2' ? '<label class="f">Name shown here<input data-ailabel="' + id + '" value="' + esc(c.label || '') + '" placeholder="' + esc(AI_NAMES[id]) + '"></label>' : '') +
+      '<div class="hint">' + esc(AI_HELP[id]) + (st.problem && !st.usable ? '<br><span style="color:var(--bad)">' + esc(st.problem) + '</span>' : '') + '</div>' +
+      '<div class="actions"><button class="sm ghost" type="button" data-aitest="' + id + '">Test</button><span class="meta" id="aitest-' + id + '"></span></div></div>';
+  }).join('');
+}
+
+async function aiLoad() {
+  say($('aiSetMsg'), 'Loading...');
+  const { data } = await sb.from('ai_settings').select('*').eq('id', 1).maybeSingle();
+  const row = data || {};
+  const all = Object.keys(AI_NAMES);
+  const order = (Array.isArray(row.fallback_order) ? row.fallback_order : []).filter((x) => AI_NAMES[x]);
+  all.forEach((x) => { if (!order.includes(x)) order.push(x); });
+  aiWork = {
+    provider: AI_NAMES[row.provider] ? row.provider : 'gemini',
+    auto_fallback: row.auto_fallback !== false,
+    order,
+    config: (row.config && typeof row.config === 'object') ? JSON.parse(JSON.stringify(row.config)) : {},
+  };
+  aiDirty = false;
+  const ok = await aiStatus();
+  aiRender();
+  say($('aiSetMsg'), ok ? '' : 'Could not reach the grading function. Deploy grade-multi in Supabase first.', ok ? '' : 'err');
+}
+
+async function aiSave() {
+  const w = aiWork;
+  const config = {};
+  w.order.forEach((id) => {
+    const c = w.config[id] || {};
+    const o = {};
+    if (c.model && c.model.trim()) o.model = c.model.trim();
+    if (c.base && c.base.trim()) o.base = c.base.trim();
+    if (c.label && c.label.trim()) o.label = c.label.trim();
+    if (c.enabled === false) o.enabled = false;
+    if (Object.keys(o).length) config[id] = o;
+  });
+  const { error } = await sb.from('ai_settings').upsert({
+    id: 1, provider: w.provider, auto_fallback: w.auto_fallback, fallback_order: w.order, config,
+  });
+  if (error) return say($('aiSetMsg'), 'Could not save: ' + error.message, 'err');
+  aiDirty = false;
+  await aiStatus();
+  aiRender();
+  say($('aiSetMsg'), 'AI settings saved.', 'ok');
+}
+
+(function aiWire() {
+  const touch = () => { aiDirty = true; };
+  $('aiMain').onchange = () => { aiWork.provider = $('aiMain').value; touch(); };
+  $('aiFall').onchange = () => { aiWork.auto_fallback = $('aiFall').checked; touch(); };
+  $('aiSave').onclick = aiSave;
+  $('aiCheck').onclick = async () => {
+    say($('aiSetMsg'), 'Checking...');
+    const ok = await aiStatus();
+    aiRender();
+    say($('aiSetMsg'), ok ? 'Keys checked.' : 'Could not reach the grading function.', ok ? 'ok' : 'err');
+  };
+  const cfg = (id) => (aiWork.config[id] = aiWork.config[id] || {});
+  $('aiList').addEventListener('input', (e) => {
+    const t = e.target;
+    if (t.dataset.aimodel) cfg(t.dataset.aimodel).model = t.value;
+    else if (t.dataset.aibase) cfg(t.dataset.aibase).base = t.value;
+    else if (t.dataset.ailabel) cfg(t.dataset.ailabel).label = t.value;
+    else return;
+    touch();
+  });
+  $('aiList').addEventListener('change', (e) => {
+    const t = e.target;
+    if (t.dataset.aiena) { cfg(t.dataset.aiena).enabled = t.checked; touch(); }
+  });
+  $('aiList').addEventListener('click', async (e) => {
+    const up = e.target.closest('[data-aiup]');
+    const down = e.target.closest('[data-aidown]');
+    const test = e.target.closest('[data-aitest]');
+    if (up || down) {
+      const id = (up || down).dataset.aiup || (up || down).dataset.aidown;
+      const o = aiWork.order;
+      const i = o.indexOf(id);
+      const j = up ? i - 1 : i + 1;
+      if (i < 0 || j < 0 || j >= o.length) return;
+      o.splice(j, 0, o.splice(i, 1)[0]);
+      touch();
+      aiRender();
+      return;
+    }
+    if (test) {
+      const id = test.dataset.aitest;
+      const out = $('aitest-' + id);
+      if (aiDirty) { out.textContent = 'Save the settings first, then test.'; return; }
+      out.textContent = 'Testing...';
+      test.disabled = true;
+      const { data, error } = await sb.functions.invoke(GRADE_FN, { body: { action: 'test', provider: id } });
+      test.disabled = false;
+      if (error) out.textContent = 'Could not reach the function.';
+      else if (data && data.ok) out.textContent = '\u2713 Works (' + (data.ms / 1000).toFixed(1) + ' s, ' + data.model + ')';
+      else out.textContent = '\u2717 ' + ((data && data.error) || 'Failed');
+    }
+  });
+})();
+
 $('aiBtn').onclick = async () => {
   const msg = $('aiMsg');
   const again = $('aiRe').checked;
+  const prov = $('aiProv').value;
   const todo = resRows.filter((a) => again || !a.written_graded_at);
   if (!todo.length) return say(msg, 'Everything is already graded.', 'ok');
-  if (!confirm('Send the written answers of ' + todo.length + ' student(s) to the AI for marking? Student names are not sent.')) return;
+  const who = prov ? aiLabel(prov) : 'the AI';
+  if (!confirm('Send the written answers of ' + todo.length + ' student(s) to ' + who + ' for marking? Student names are not sent.')) return;
   $('aiBtn').disabled = true;
   let done = 0, failed = 0, lastErr = '';
+  const used = {};
   for (const a of todo) {
     say(msg, 'Grading ' + (done + failed + 1) + ' of ' + todo.length + '... please keep this page open.');
     let ok = false;
     for (let t = 0; t < 3 && !ok; t++) {
-      const { data, error } = await sb.functions.invoke('grade-written', { body: { attempt_id: a.id, regrade: again } });
+      const { data, error } = await sb.functions.invoke(GRADE_FN, { body: { attempt_id: a.id, regrade: again, provider: prov || undefined } });
       if (!error && data && data.skipped) { lastErr = 'no written questions found for this attempt (check the question type in the database)'; break; }
-      if (!error && data && !data.error) { ok = true; break; }
+      if (!error && data && !data.error) {
+        ok = true;
+        if (data.provider) used[data.provider] = (used[data.provider] || 0) + 1;
+        break;
+      }
       lastErr = await fnError(error, data);
       if (!/429|rate|quota|RESOURCE_EXHAUSTED|overloaded|503/i.test(lastErr)) break;
       await new Promise((r) => setTimeout(r, 15000 * (t + 1)));
     }
     if (ok) done++; else failed++;
-    await new Promise((r) => setTimeout(r, 4500));
+    await new Promise((r) => setTimeout(r, 1500));
   }
   $('aiBtn').disabled = false;
   await loadResults();
-  say($('aiMsg'), 'Graded ' + done + ' of ' + todo.length + '.' + (failed ? ' ' + failed + ' failed: ' + lastErr : ' Check the marks, then release the results.'), failed ? 'err' : 'ok');
+  const by = Object.keys(used).map((k) => aiLabel(k) + ' ' + used[k]).join(', ');
+  say($('aiMsg'), 'Graded ' + done + ' of ' + todo.length + (by ? ' (' + by + ')' : '') + '.' +
+    (failed ? ' ' + failed + ' failed: ' + lastErr + ' Tip: open "AI settings" and add or switch to another AI.' : ' Check the marks, then release the results.'),
+  failed ? 'err' : 'ok');
 };
+
 $('resQuiz').onchange = loadResults;
 $('resRefresh').onclick = async () => { await loadResultQuizzes(); await loadResults(); };
 
 // ---- PDF report (same layout the student gets, with every mistake and correction) ----
 const REPORT_CSS = 'body{font-family:Arial,Helvetica,sans-serif;padding:22px;color:#111}h1{margin:0 0 4px}h2{margin:6px 0 18px;color:#16213E}' +
   '.q{border:1px solid #ccd;border-radius:8px;padding:12px;margin:12px 0;page-break-inside:avoid}h3{margin:0 0 6px;font-size:15px}' +
-  '.ans{background:#f6f7fb;padding:8px;border-radius:6px;line-height:1.5}mark{background:#ffd54f}.ok{color:#1b7f55}li{margin-bottom:8px}';
+  '.ans{background:#f6f7fb;padding:8px;border-radius:6px;line-height:1.5}mark{background:#ffd54f}mark[data-n]::after{content:attr(data-n);font-size:9px;font-weight:700;vertical-align:super}.tmnote{font-size:13px;margin:4px 0}.tmdot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}.ok{color:#1b7f55}li{margin-bottom:8px}';
 
 function markSegmentsA(text, mistakes) {
   const t = String(text || '');
@@ -979,14 +1481,18 @@ function reportBodyHtml(a) {
     if (q.qtype === 'written') {
       const g = a.written_grades ? a.written_grades[q.id] : null;
       const txt = a.answers && typeof a.answers[q.id] === 'string' ? a.answers[q.id] : '';
-      const segs = markSegmentsA(txt, g ? g.mistakes : [])
+      const tmk = a.teacher_marks && a.teacher_marks[q.id];
+      const th = tmk ? hlNormalize(tmk.highlights, txt.length) : [];
+      const segs = th.length ? tmReportHtml(txt, th) : markSegmentsA(txt, g ? g.mistakes : [])
         .map((p) => (p.bad ? '<mark>' + esc(p.t) + '</mark>' : esc(p.t))).join('').replace(/\n/g, '<br>');
+      const tnotes = tmNotesHtml(txt, th);
+      const tcomment = (tmk && tmk.comment ? '<p><b>Teacher comment:</b> ' + esc(tmk.comment) + '</p>' : '') + (tnotes ? '<p><b>Teacher notes</b></p>' + tnotes : '');
       const list = (g && Array.isArray(g.mistakes) ? g.mistakes : []).map((m) =>
         '<li><b>' + esc(m.type) + '</b>' + (m.quote ? ': &ldquo;' + esc(m.quote) + '&rdquo;' : '') +
         '<br>' + esc(m.explanation) + '<br><span class="ok">Correct: ' + esc(m.correction) + '</span></li>').join('');
       body += '<div class="q"><h3>Question ' + (i + 1) + ' (written): ' + (g ? Number(g.marks) : 'not graded') +
         ' / ' + Number(q.marks) + ' marks</h3><p><b>' + esc(q.text) + '</b></p><p class="ans">' +
-        (segs || '<i>No answer written</i>') + '</p>' + (g && g.summary ? '<p><b>Feedback:</b> ' + esc(g.summary) + '</p>' : '') +
+        (segs || '<i>No answer written</i>') + '</p>' + (g && g.summary ? '<p><b>Feedback:</b> ' + esc(g.summary) + '</p>' : '') + tcomment +
         (list ? '<p><b>Mistakes and corrections</b></p><ol>' + list + '</ol>' : '<p class="ok">No mistakes found.</p>') + '</div>';
     } else {
       const opts = Array.isArray(q.options) ? q.options : [];
@@ -1073,7 +1579,7 @@ $('xlsBtn').onclick = async () => {
   }));
   const vio = [];
   resRows.forEach((a) => (a.violations || []).forEach((x) =>
-    vio.push({ Name: a.student_name, 'Roll No': a.roll_no, Type: x.type, Time: new Date(x.at).toLocaleString() })));
+    vio.push({ Name: a.student_name, 'Roll No': a.roll_no, Type: vLabel(x), Counted: x.soft ? 'No (review)' : 'Yes', Time: new Date(x.at).toLocaleString() })));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), 'Results');
   if (resQs.length) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(matrix()), 'Answers');
